@@ -131,9 +131,16 @@
                   <label>名称</label>
                   <input v-model.trim="createGroupForm.name" placeholder="群名称" />
                 </div>
+                <!-- 修改：用可视化成员列表替代原来的 readonly textarea，每个成员显示用户名和删除按钮，更直观 -->
                 <div class="field">
-                  <label>成员ID</label>
-                  <textarea :value="selectedMemberIds.join('\n')" readonly placeholder="从好友/搜索结果里点选"></textarea>
+                  <label>已选成员（{{ selectedMembers.length }}）</label>
+                  <div v-if="selectedMembers.length === 0" class="muted" style="padding: 8px 0">从下方搜索结果中点选</div>
+                  <div v-else style="display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 0">
+                    <span v-for="m in selectedMembers" :key="m.id" style="display: inline-flex; align-items: center; gap: 4px; background: #e8f0fe; border-radius: 12px; padding: 4px 10px; font-size: 13px">
+                      {{ m.username }}
+                      <button class="btn ghost" style="padding: 0 4px; font-size: 12px; line-height: 1" @click="toggleSelectedMember(m.id)">✕</button>
+                    </span>
+                  </div>
                 </div>
                 <div class="toolbar">
                   <button class="btn primary" @click="createChatGroup">创建</button>
@@ -209,6 +216,7 @@
                   <div class="toolbar">
                     <button class="btn ghost" @click="startPrivateChat(friend)">发起私聊</button>
                     <button class="btn ghost" @click="sendFriend(friend.id)">加好友</button>
+                    <button class="btn ghost" style="color: #e74c3c" @click="deleteFriend(friend.id)">删除好友</button>
                   </div>
                 </div>
               </div>
@@ -223,7 +231,7 @@
                 <button class="btn ghost" @click="loadFriendRequests">刷新请求</button>
               </div>
               <div class="list">
-                <div v-for="req in friendRequests" :key="req.user_id + req.request_type" class="list-item">
+                <div v-for="req in pendingFriendRequests" :key="req.user_id + req.request_type" class="list-item">
                   <div class="list-item-head">
                     <strong>{{ req.username }}</strong>
                     <span class="muted">{{ req.status }}</span>
@@ -244,10 +252,17 @@
                 <span>个人信息</span>
                 <span class="muted">{{ currentUser?.id }}</span>
               </div>
+              <div style="text-align: center; margin-bottom: 12px">
+                <img :src="avatarUrl(currentUser?.id) + '?v=' + avatarVersion" alt="头像" style="width: 64px; height: 64px; border-radius: 50%; object-fit: cover" />
+              </div>
               <div class="field-grid">
                 <div class="field">
                   <label>用户名</label>
                   <input v-model.trim="profileForm.username" />
+                </div>
+                <div class="field">
+                  <label>邮箱</label>
+                  <input :value="currentUser?.email || ''" readonly />
                 </div>
                 <div class="field">
                   <label>手机号</label>
@@ -417,7 +432,7 @@ import {
   WS_BASE,
   avatarUrl,
   createGroup,
-  deleteFriend,
+  deleteFriend as apiDeleteFriend,
   dissolveGroup,
   downloadFileUrl,
   friendRequestCount,
@@ -494,6 +509,19 @@ const createGroupForm = reactive({
 const profileForm = reactive({
   username: "",
   phone: "",
+});
+
+// 新增（根据选中的 member ID 从搜索结果和好友列表中匹配出完整用户信息，用于在创建群表单中显示成员名称，之前只有 ID 列表没有名称，用户不知道选了谁）
+const selectedMembers = computed(() => {
+  const allUsers = [...userSearchResults.value, ...friends.value];
+  return selectedMemberIds.value
+    .map((id) => allUsers.find((u) => u.id === id))
+    .filter(Boolean) as User[];
+});
+
+// 新增（只显示状态为 pending 的好友请求，已接受/已拒绝的不再显示在列表里）
+const pendingFriendRequests = computed(() => {
+  return friendRequests.value.filter((req) => req.status === "pending");
 });
 
 function notify(message: string) {
@@ -611,7 +639,10 @@ async function searchUsersAction() {
     userSearchResults.value = [];
     return;
   }
-  const data = await searchUsers({ username: userSearchQuery.value.trim() });
+  const query = userSearchQuery.value.trim();
+  // 修改：之前只传 username 字段，现在根据输入内容判断传 email 还是 username，否则输入邮箱搜不到人
+  const searchParams = query.includes("@") ? { email: query } : { username: query };
+  const data = await searchUsers(searchParams);
   userSearchResults.value = data.filter((user) => user.id !== currentUser.value?.id);
 }
 
@@ -647,6 +678,7 @@ async function createChatGroup() {
   createGroupForm.name = "";
   createGroupForm.type = "group";
   clearSelectedMembers();
+  sendWs({ type: "refresh_groups" }); // 新增：刷新 WebSocket 群订阅，让后端知道用户加入了新群，否则发消息会报"你不在该群组中"
   await loadGroups();
   await openGroup(group.id);
 }
@@ -672,24 +704,36 @@ async function openGroup(groupId: string) {
 }
 
 async function loadGroupMessages(groupId: string) {
-  const payload = await getGroupMessages({ id: groupId, page: 1, page_size: 50 });
-  currentMessages.value = (payload.items || []).map(normalizeMessage);
-  scrollToBottom();
+  try {
+    const payload = await getGroupMessages({ id: groupId, page: 1, page_size: 50 });
+    currentMessages.value = (payload.items || []).map(normalizeMessage);
+    scrollToBottom();
+    notify(`已加载 ${currentMessages.value.length} 条消息，请查看聊天区域`); // 修改：提示用户去聊天区域看消息
+  } catch {
+    notify("加载历史消息失败"); // 修改：请求失败时给用户提示
+  }
 }
 
 async function loadOnlineUsers(groupId: string) {
   if (!ws.value || ws.value.readyState !== WebSocket.OPEN) {
+    notify("WebSocket 未连接，无法获取在线成员"); // 修改：未连接时给用户提示，而不是静默返回
     return;
   }
   ws.value.send(JSON.stringify({ type: "get_online_users", group_id: groupId }));
+  notify("正在获取在线成员，请看右侧面板"); // 新增：提示用户去右侧面板查看结果
 }
 
 async function readCurrentGroup() {
   if (!selectedGroupId.value || !currentMessages.value.length) return;
-  await markRead({
-    group_id: selectedGroupId.value,
-    message_ids: currentMessages.value.map((item) => item.id),
-  });
+  try {
+    await markRead({
+      group_id: selectedGroupId.value,
+      message_ids: currentMessages.value.map((item) => item.id),
+    });
+    notify("已标记已读"); // 新增：成功后给用户提示
+  } catch {
+    notify("标记已读失败"); // 新增：失败时给用户提示
+  }
   await loadGroups();
 }
 
@@ -765,14 +809,41 @@ function connectWs() {
     }
     if (type === "online_users" && data.content) {
       onlineUsers.value = (data.content as Array<{ user_id: string; username: string; device_count: number }>) || [];
+      notify(`已获取 ${onlineUsers.value.length} 位在线成员，请看右侧面板`); // 新增：收到在线成员数据后提示用户看右侧面板
       return;
     }
     if (type === "groups_updated") {
+      sendWs({ type: "refresh_groups" }); // 修改：刷新后端 WebSocket 群订阅，否则发消息会报"你不在该群组中"
       await loadGroups();
+      return;
+    }
+    if (type === "private_chat_opened") {
+      // 新增：收到私聊邀请通知，自动打开聊天窗口（解决"第一次聊天要点一下私聊才能继续对话"的问题）
+      const gid = String(data.group_id || "");
+      const inviterName = String(data.inviter_name || "");
+      notify(`${inviterName} 发起了私聊`);
+      await loadGroups();
+      // 等群列表加载完再打开聊天
+      if (groups.value.find((g) => g.id === gid)) {
+        await openGroup(gid);
+      }
       return;
     }
     if (type === "refresh_friend_request_count") {
       await loadFriendRequests();
+      return;
+    }
+    if (type === "group_dissolved") {
+      // 收到群解散通知，自动移除该群
+      const gid = String(data.group_id || "");
+      groups.value = groups.value.filter((g) => g.id !== gid);
+      if (selectedGroupId.value === gid) {
+        selectedGroupId.value = "";
+        selectedGroup.value = null;
+        currentMessages.value = [];
+      }
+      notify("该群已被解散");
+      await loadGroups();
       return;
     }
     if (type === "error") {
@@ -812,6 +883,8 @@ async function onGroupFileChange(event: Event) {
   await loadGroupMessages(selectedGroupId.value);
 }
 
+const avatarVersion = ref(0); // 新增：头像版本号，用于刷新头像缓存
+
 async function onAvatarChange(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0];
   if (!file || !currentUser.value) return;
@@ -819,6 +892,7 @@ async function onAvatarChange(event: Event) {
   currentUser.value.avatar = result.avatar || result.file_id || currentUser.value.avatar;
   setStoredUser(currentUser.value);
   profileForm.username = currentUser.value.username;
+  avatarVersion.value++; // 新增：版本号+1，强制刷新头像显示（浏览器会缓存同URL的图片）
   notify("头像已更新");
 }
 
@@ -869,6 +943,12 @@ async function handleFriend(userId: string, action: "accept" | "reject") {
   await handleFriendRequest({ friend_id: userId, action });
   notify(action === "accept" ? "已接受好友请求" : "已拒绝好友请求");
   await Promise.all([loadFriendRequests(), loadFriends()]);
+}
+
+async function deleteFriend(userId: string) {
+  await apiDeleteFriend(userId); // 调用后端删除好友接口（双向删除）
+  notify("已删除好友");
+  await loadFriends();
 }
 
 async function saveProfile() {
@@ -938,12 +1018,23 @@ async function startPrivateChat(user: User) {
     type: "private",
   });
 
+  // 修改：直接用创建返回的群数据打开聊天，不依赖 loadGroups 的结果（避免竞态条件导致列表为空）
   activeSidebar.value = "groups";
   showCreateGroup.value = false;
   clearSelectedMembers();
+  sendWs({ type: "refresh_groups" }); // 刷新 WebSocket 订阅，确保后续能收到该群的消息
+
+  // 新增：手动把新群加入群列表，这样左侧 sidebar 能立刻显示
+  const newGroup = { ...group, unread_count: 0, is_dissolved: false } as unknown as Group;
+  if (!groups.value.find((g) => g.id === newGroup.id)) {
+    groups.value = [newGroup, ...groups.value];
+  }
+
+  selectedGroupId.value = newGroup.id;
+  selectedGroup.value = newGroup;
+  currentMessages.value = [];
   notify("私聊已打开");
-  await loadGroups();
-  await openGroup(group.id);
+  scrollToBottom();
 }
 
 async function initSession() {
