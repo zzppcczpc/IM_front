@@ -603,6 +603,42 @@ function normalizeMessage(raw: Message): Message {
   };
 }
 
+// 新增：统一按消息创建时间升序排序，保证聊天区始终是旧消息在上、新消息在下。
+function messageTime(message: Message) {
+  const time = new Date(message.created_at || "").getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+// 新增：统一的消息去重 + 排序入口，避免历史消息、离线消息、实时消息各自追加导致乱序。
+function mergeMessagesByTime(baseMessages: Message[], incomingMessages: Message[]) {
+  const merged = new Map<string, Message>();
+  for (const message of [...baseMessages, ...incomingMessages].map(normalizeMessage)) {
+    merged.set(message.id, message);
+  }
+  return [...merged.values()].sort((a, b) => messageTime(a) - messageTime(b));
+}
+
+// 新增：替换当前会话消息时也强制排序，用于打开群聊和手动刷新历史。
+function setCurrentMessages(messages: Message[]) {
+  currentMessages.value = mergeMessagesByTime([], messages);
+}
+
+// 新增：追加当前会话消息时统一去重排序，用于 WebSocket 实时消息和离线消息。
+function mergeCurrentMessages(messages: Message[]) {
+  currentMessages.value = mergeMessagesByTime(currentMessages.value, messages);
+}
+
+// 新增：群列表里的最后一条消息也按时间取最新，避免离线消息数组不是最新在最后时显示错。
+function updateGroupLastMessage(groupId: string, messages: Message[]) {
+  const group = groups.value.find((item) => item.id === groupId);
+  if (!group || !messages.length) return;
+  const sorted = mergeMessagesByTime([], messages);
+  const last = sorted[sorted.length - 1];
+  if (last) {
+    group.last_message = last as unknown as Record<string, unknown>;
+  }
+}
+
 async function refreshBackend() {
   try {
     await pingConfirm();
@@ -688,7 +724,8 @@ async function openGroup(groupId: string) {
   selectedGroup.value = groups.value.find((g) => g.id === groupId) || (await getGroupDetail(groupId));
   try {
     const payload = await getGroupMessages({ id: groupId, page: 1, page_size: 50 });
-    currentMessages.value = (payload.items || []).map(normalizeMessage);
+    // 修改：打开群聊时走统一排序入口；删除原来的直接赋值，避免接口顺序影响页面顺序。
+    setCurrentMessages(payload.items || []);
     onlineUsers.value = [];
   } catch {
     currentMessages.value = [];
@@ -706,7 +743,8 @@ async function openGroup(groupId: string) {
 async function loadGroupMessages(groupId: string) {
   try {
     const payload = await getGroupMessages({ id: groupId, page: 1, page_size: 50 });
-    currentMessages.value = (payload.items || []).map(normalizeMessage);
+    // 修改：手动刷新历史时走统一排序入口；删除原来的直接赋值，保证刷新后仍按时间显示。
+    setCurrentMessages(payload.items || []);
     scrollToBottom();
     notify(`已加载 ${currentMessages.value.length} 条消息，请查看聊天区域`); // 修改：提示用户去聊天区域看消息
   } catch {
@@ -740,8 +778,9 @@ async function readCurrentGroup() {
 function applyIncomingMessage(message: Message) {
   const normalized = normalizeMessage(message);
   const list = groups.value.find((item) => item.id === normalized.group_id);
-  if (!currentMessages.value.some((item) => item.id === normalized.id)) {
-    currentMessages.value = [...currentMessages.value, normalized];
+  if (normalized.group_id === selectedGroupId.value) {
+    // 修改：实时消息走统一去重排序；删除原来的直接追加，避免晚到的消息插错位置。
+    mergeCurrentMessages([normalized]);
   }
   if (list && list.id !== selectedGroupId.value) {
     list.unread_count = (list.unread_count || 0) + 1;
@@ -787,10 +826,31 @@ function connectWs() {
       return;
     }
     if (type === "group_history" && typeof data.group_id === "string") {
-      currentMessages.value = ((data.content as Message[]) || []).map(normalizeMessage);
       if (selectedGroupId.value === data.group_id) {
+        // 修改：只合并当前打开群聊的历史消息；删除原来收到任意群历史就覆盖当前聊天区的逻辑。
+        mergeCurrentMessages((data.content as Message[]) || []);
         scrollToBottom();
       }
+      return;
+    }
+    if (type === "offline_messages" && Array.isArray(data.content)) {
+      const offlineGroups = data.content as Array<{ group_id: string; messages: Message[] }>;
+      for (const group of offlineGroups) {
+        const normalizedMessages = (group.messages || []).map(normalizeMessage);
+        if (group.group_id === selectedGroupId.value) {
+          // 修改：离线消息走统一去重排序；删除原来的手写 filter + sort，避免和历史消息重复/乱序。
+          mergeCurrentMessages(normalizedMessages);
+          scrollToBottom();
+        }
+        // 更新群列表的未读数和最新消息
+        const g = groups.value.find((item) => item.id === group.group_id);
+        if (g) {
+          // 修改：未读数按本次离线消息增加，最后一条消息按 created_at 取最新。
+          g.unread_count = (g.unread_count || 0) + normalizedMessages.length;
+          updateGroupLastMessage(group.group_id, normalizedMessages);
+        }
+      }
+      notify(`收到 ${offlineGroups.reduce((sum, g) => sum + g.messages.length, 0)} 条离线消息`);
       return;
     }
     if (type === "message" && data.data) {
