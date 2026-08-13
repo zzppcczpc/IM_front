@@ -393,6 +393,18 @@ a {
   grid-template-columns: 1fr auto;
 }
 
+/* 引用消息预览 */
+.cite-preview {
+  padding: 10px 12px;
+  border-left: 3px solid #2563eb;
+  background: #f1f5f9;
+  border-radius: 6px;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .right-rail {
   display: grid;
   grid-template-rows: auto auto 1fr;
@@ -430,6 +442,41 @@ a {
   background: #0f172a;
   color: #fff;
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.25);
+}
+
+/* 消息右键菜单 */
+.context-menu {
+  position: fixed;
+  z-index: 100;
+  min-width: 120px;
+  padding: 6px 0;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.15);
+  border: 1px solid #e2e8f0;
+}
+
+.context-menu-item {
+  display: block;
+  width: 100%;
+  padding: 10px 16px;
+  text-align: left;
+  font-size: 14px;
+  color: #334155;
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.context-menu-item:hover {
+  background: #f1f5f9;
+}
+
+.context-menu-item.danger {
+  color: #dc2626;
+}
+
+.context-menu-item.danger:hover {
+  background: #fef2f2;
 }
 
 @media (max-width: 1080px) {

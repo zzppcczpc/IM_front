@@ -303,7 +303,9 @@
                 </span>
               </div>
               <div class="toolbar">
-                <button class="btn ghost" @click="loadGroupMessages(selectedGroup.id)">历史</button>
+                <button class="btn ghost" @click="loadGroupMessages(selectedGroup.id)" :disabled="loadingHistory">
+                  {{ loadingHistory ? '加载中...' : '历史' }}
+                </button>
                 <button class="btn ghost" @click="loadOnlineUsers(selectedGroup.id)">在线成员</button>
                 <button class="btn ghost" @click="readCurrentGroup">已读</button>
                 <button v-if="selectedGroup.owner_id === currentUser?.id" class="btn danger" @click="dissolveCurrentGroup">解散</button>
@@ -318,6 +320,7 @@
                   :key="msg.id"
                   class="message-row"
                   :class="{ self: msg.sender_id === currentUser?.id }"
+                  @contextmenu.prevent="showMessageContextMenu($event, msg)"
                 >
                   <div class="message-bubble">
                     <div class="message-meta">
@@ -358,8 +361,14 @@
                     <input type="file" hidden @change="onGroupFileChange" />
                   </label>
                   <button class="btn ghost" @click="loadGroupMessages(selectedGroup.id)">刷新历史</button>
+                  <button v-if="citeMessage" class="btn ghost" @click="citeMessage = null">取消引用</button>
                 </div>
                 <div class="muted">回车发送，Shift+回车换行</div>
+              </div>
+              <!-- 引用消息提示 -->
+              <div v-if="citeMessage" class="cite-preview">
+                <span class="muted">引用：</span>
+                <span>{{ citeMessage.sender_username }}: {{ renderContent(citeMessage.content) }}</span>
               </div>
               <div class="composer-row">
                 <textarea
@@ -417,6 +426,30 @@
   </div>
 
   <div v-if="toast" class="toast">{{ toast }}</div>
+
+  <!-- 消息右键菜单 -->
+  <div
+    v-if="contextMenu.visible"
+    class="context-menu"
+    :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+  >
+    <button class="context-menu-item" @click="handleContextAction('copy')">
+      复制
+    </button>
+    <button class="context-menu-item" @click="handleContextAction('quote')">
+      引用
+    </button>
+    <button
+      v-if="contextMenu.message?.sender_id === currentUser?.id"
+      class="context-menu-item"
+      @click="handleContextAction('revoke')"
+    >
+      撤回
+    </button>
+    <button class="context-menu-item danger" @click="handleContextAction('delete')">
+      删除
+    </button>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -471,6 +504,9 @@ const authMode = ref<AuthMode | "reset">("login");
 const currentUser = ref<User | null>(getStoredUser());
 const token = ref(getStoredToken());
 const wsReady = ref(false);
+const loadingHistory = ref(false); // 新增：加载历史消息的状态
+const hasMoreHistory = ref(false); // 新增：是否还有更多历史消息
+const nextCursor = ref<string | null>(null); // 新增：下一页游标
 const ws = ref<WebSocket | null>(null);
 const activeSidebar = ref<"groups" | "friends" | "profile">("groups");
 const groups = ref<Group[]>([]);
@@ -489,6 +525,20 @@ const friendSearchQuery = ref("");
 const showCreateGroup = ref(false);
 const toast = ref("");
 const messageScrollRef = ref<HTMLElement | null>(null);
+
+// 消息右键菜单相关
+const contextMenu = ref<{
+  visible: boolean;
+  x: number;
+  y: number;
+  message: Message | null;
+}>({
+  visible: false,
+  x: 0,
+  y: 0,
+  message: null,
+});
+const citeMessage = ref<Message | null>(null); // 引用的消息
 
 const loginForm = reactive({ email: "", password: "" });
 const registerForm = reactive({
@@ -741,15 +791,25 @@ async function openGroup(groupId: string) {
 }
 
 async function loadGroupMessages(groupId: string) {
-  try {
-    const payload = await getGroupMessages({ id: groupId, page: 1, page_size: 50 });
-    // 修改：手动刷新历史时走统一排序入口；删除原来的直接赋值，保证刷新后仍按时间显示。
-    setCurrentMessages(payload.items || []);
-    scrollToBottom();
-    notify(`已加载 ${currentMessages.value.length} 条消息，请查看聊天区域`); // 修改：提示用户去聊天区域看消息
-  } catch {
-    notify("加载历史消息失败"); // 修改：请求失败时给用户提示
+  if (!ws.value || ws.value.readyState !== WebSocket.OPEN) {
+    notify("WebSocket 未连接，无法加载历史消息");
+    return;
   }
+  loadingHistory.value = true;
+
+  // 构建请求参数
+  const payload: { type: string; group_id: string; limit: number; before_id?: string } = {
+    type: "get_history",
+    group_id: groupId,
+    limit: 10,
+  };
+
+  // 如果有下一页游标，传递 before_id 继续往前查
+  if (hasMoreHistory.value && nextCursor.value) {
+    payload.before_id = nextCursor.value;
+  }
+
+  ws.value.send(JSON.stringify(payload));
 }
 
 async function loadOnlineUsers(groupId: string) {
@@ -794,6 +854,7 @@ function applyIncomingMessage(message: Message) {
 function connectWs() {
   if (!token.value) return;
   ws.value?.close();
+  // 后端路由：/api/chat/ws/{token}（main.py 中 chat.router 的 prefix 是 /api/chat）
   ws.value = new WebSocket(`${WS_BASE}/api/chat/ws/${token.value}`);
   wsReady.value = false;
 
@@ -822,6 +883,29 @@ function connectWs() {
             await openGroup(incoming[0].id);
           }
         }
+      }
+      return;
+    }
+    // 处理 WebSocket get_history 响应
+    if (type === "history" && typeof data.group_id === "string") {
+      if (selectedGroupId.value === data.group_id) {
+        const items = (data.items as Message[]) || [];
+        hasMoreHistory.value = data.has_more === true;
+        nextCursor.value = data.next_cursor as string | null;
+
+        // 判断是首次加载还是加载更多
+        // 如果 before_id 存在，说明是加载更多（往前翻页），需要插入到现有消息前面
+        if (data.before_id) {
+          // 加载更多：将更早的消息插入到前面
+          currentMessages.value = mergeMessagesByTime(items, currentMessages.value);
+        } else {
+          // 首次加载：直接替换
+          setCurrentMessages(items);
+        }
+
+        scrollToBottom();
+        loadingHistory.value = false;
+        notify(`已加载 ${items.length} 条消息${hasMoreHistory.value ? "，还有更多" : ""}`);
       }
       return;
     }
@@ -865,6 +949,18 @@ function connectWs() {
       currentMessages.value = currentMessages.value.map((item) =>
         item.id === targetId ? { ...item, is_revoke: true } : item,
       );
+      return;
+    }
+    if (type === "message_deleted" && data.content && typeof data.content === "object") {
+      // 收到删除消息响应，从当前消息列表中移除
+      const targetId = String((data.content as Record<string, unknown>).message_id || "");
+      currentMessages.value = currentMessages.value.filter((item) => item.id !== targetId);
+      notify("消息已删除");
+      return;
+    }
+    if (type === "revoke_success") {
+      // 撤回成功响应
+      notify("消息已撤回");
       return;
     }
     if (type === "online_users" && data.content) {
@@ -920,14 +1016,87 @@ function sendWs(payload: Record<string, unknown>) {
   ws.value.send(JSON.stringify(payload));
 }
 
+// 消息右键菜单相关函数
+function showMessageContextMenu(event: MouseEvent, msg: Message) {
+  contextMenu.value = {
+    visible: true,
+    x: event.clientX,
+    y: event.clientY,
+    message: msg,
+  };
+}
+
+function hideContextMenu() {
+  contextMenu.value.visible = false;
+  contextMenu.value.message = null;
+}
+
+function handleContextAction(action: "copy" | "quote" | "revoke" | "delete") {
+  const msg = contextMenu.value.message;
+  if (!msg) {
+    hideContextMenu();
+    return;
+  }
+
+  switch (action) {
+    case "copy":
+      // 复制消息内容
+      const content = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
+      navigator.clipboard.writeText(content).then(() => {
+        notify("已复制到剪贴板");
+      }).catch(() => {
+        notify("复制失败");
+      });
+      break;
+
+    case "quote":
+      // 引用消息
+      citeMessage.value = msg;
+      notify("已引用消息，请在输入框中输入回复内容");
+      break;
+
+    case "revoke":
+      // 撤回消息（只能撤回自己的消息）
+      if (msg.sender_id !== currentUser.value?.id) {
+        notify("只能撤回自己的消息");
+        break;
+      }
+      sendWs({
+        type: "revoke",
+        group_id: selectedGroupId.value,
+        message_id: msg.id,
+      });
+      notify("消息已撤回");
+      break;
+
+    case "delete":
+      // 删除消息（仅影响当前用户）
+      sendWs({
+        type: "delete_message",
+        group_id: selectedGroupId.value,
+        message_id: msg.id,
+      });
+      notify("消息已删除");
+      break;
+  }
+
+  hideContextMenu();
+}
+
 function sendTextMessage() {
   if (!selectedGroupId.value || !draftMessage.value.trim()) return;
-  sendWs({
+  const payload: Record<string, unknown> = {
     type: "text",
     group_id: selectedGroupId.value,
     content: draftMessage.value.trim(),
     at_list: [],
-  });
+  };
+  // 如果有引用消息，添加 cite 字段
+  if (citeMessage.value) {
+    payload.cite = citeMessage.value.id;
+    citeMessage.value = null; // 发送后清除引用
+  }
+  sendWs(payload);
   draftMessage.value = "";
 }
 
@@ -1109,9 +1278,12 @@ onMounted(async () => {
     profileForm.phone = currentUser.value.phone || "";
     await initSession();
   }
+  // 点击其他地方关闭右键菜单
+  document.addEventListener("click", hideContextMenu);
 });
 
 onBeforeUnmount(() => {
   ws.value?.close();
+  document.removeEventListener("click", hideContextMenu);
 });
 </script>
