@@ -181,6 +181,12 @@ a {
   font-size: 12px;
 }
 
+/* 新增：置顶标识样式 */
+.pin-badge {
+  margin-left: 6px;
+  font-size: 12px;
+}
+
 .content {
   display: grid;
   min-width: 0;
@@ -477,6 +483,25 @@ a {
 
 .context-menu-item.danger:hover {
   background: #fef2f2;
+}
+
+/* 撤回消息样式：居中显示 */
+.message-revoked {
+  width: 100%;
+  text-align: center;
+  padding: 8px 14px;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.context-menu-item.disabled {
+  color: #94a3b8;
+  cursor: not-allowed;
+  background: transparent;
+}
+
+.context-menu-item.disabled:hover {
+  background: transparent;
 }
 
 @media (max-width: 1080px) {

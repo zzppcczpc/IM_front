@@ -182,15 +182,35 @@
                 class="list-item"
                 :class="{ active: selectedGroupId === group.id }"
                 @click="openGroup(group.id)"
+                @contextmenu="handleGroupContextMenu($event, group)"
               >
                 <div class="list-item-head">
                   <strong>{{ group.name || '未命名群' }}</strong>
                   <span v-if="group.unread_count" class="badge">{{ group.unread_count }}</span>
+                  <!-- 新增：置顶标识 -->
+                  <span v-if="group.is_pinned" class="pin-badge" title="已置顶">📌</span>
                 </div>
                 <div class="muted">
                   {{ group.type === 'private' ? '私聊' : '群聊' }} · {{ group.id }}
                 </div>
               </button>
+            </div>
+
+            <!-- 新增：群组右键菜单 -->
+            <div
+              v-if="groupContextMenu.visible"
+              class="context-menu"
+              :style="{ left: groupContextMenu.x + 'px', top: groupContextMenu.y + 'px' }"
+            >
+              <div v-if="groupContextMenu.group?.is_pinned" class="context-menu-item" @click="togglePin(false)">
+                取消置顶
+              </div>
+              <div v-else class="context-menu-item" @click="togglePin(true)">
+                置顶会话
+              </div>
+              <div class="context-menu-item danger" @click="handleClearGroupMessages">
+                清空聊天记录
+              </div>
             </div>
           </div>
 
@@ -215,7 +235,6 @@
                   </div>
                   <div class="toolbar">
                     <button class="btn ghost" @click="startPrivateChat(friend)">发起私聊</button>
-                    <button class="btn ghost" @click="sendFriend(friend.id)">加好友</button>
                     <button class="btn ghost" style="color: #e74c3c" @click="deleteFriend(friend.id)">删除好友</button>
                   </div>
                 </div>
@@ -308,6 +327,7 @@
                 </button>
                 <button class="btn ghost" @click="loadOnlineUsers(selectedGroup.id)">在线成员</button>
                 <button class="btn ghost" @click="readCurrentGroup">已读</button>
+                <button class="btn ghost" @click="handleClearCurrentGroupMessages">清空记录</button>
                 <button v-if="selectedGroup.owner_id === currentUser?.id" class="btn danger" @click="dissolveCurrentGroup">解散</button>
                 <button v-else class="btn danger" @click="leaveCurrentGroup">退出</button>
               </div>
@@ -319,15 +339,19 @@
                   v-for="msg in currentMessages"
                   :key="msg.id"
                   class="message-row"
-                  :class="{ self: msg.sender_id === currentUser?.id }"
+                  :class="{ self: msg.sender_id === currentUser?.id && !msg.is_revoke }"
                   @contextmenu.prevent="showMessageContextMenu($event, msg)"
                 >
-                  <div class="message-bubble">
+                  <!-- 撤回消息：居中显示 -->
+                  <div v-if="msg.is_revoke" class="message-revoked">
+                    {{ msg.sender_id === currentUser?.id ? '你撤回了一条消息' : `${msg.sender_username}撤回了一条消息` }}
+                  </div>
+                  <!-- 正常消息 -->
+                  <div v-else class="message-bubble">
                     <div class="message-meta">
                       <img :src="avatarUrl(msg.sender_id)" alt="" width="20" height="20" style="border-radius: 50%" />
                       <strong>{{ msg.sender_username }}</strong>
                       <span>{{ formatTime(msg.created_at) }}</span>
-                      <span v-if="msg.is_revoke">已撤回</span>
                       <span v-if="msg.is_deleted">已删除</span>
                     </div>
                     <div class="message-content">
@@ -439,12 +463,21 @@
     <button class="context-menu-item" @click="handleContextAction('quote')">
       引用
     </button>
+    <!-- 撤回按钮：仅自己发送且未超时的消息可撤回 -->
     <button
-      v-if="contextMenu.message?.sender_id === currentUser?.id"
+      v-if="contextMenu.message?.sender_id === currentUser?.id && !isMessageTimeout(contextMenu.message)"
       class="context-menu-item"
       @click="handleContextAction('revoke')"
     >
       撤回
+    </button>
+    <!-- 超时消息：显示禁用的撤回按钮 -->
+    <button
+      v-if="contextMenu.message?.sender_id === currentUser?.id && isMessageTimeout(contextMenu.message)"
+      class="context-menu-item disabled"
+      disabled
+    >
+      撤回(超时)
     </button>
     <button class="context-menu-item danger" @click="handleContextAction('delete')">
       删除
@@ -496,6 +529,8 @@ import {
   pingConfirm,
   getGroupDetail,
   markRead,
+  toggleGroupPin,  // 新增：置顶接口
+  clearGroupMessages,  // 新增：清空会话消息接口
 } from "./services/api";
 import type { AuthMode, FriendRequest, Group, LoginUser, Message, User } from "./types";
 
@@ -539,6 +574,19 @@ const contextMenu = ref<{
   message: null,
 });
 const citeMessage = ref<Message | null>(null); // 引用的消息
+
+// 新增：群组右键菜单相关（用于置顶功能）
+const groupContextMenu = ref<{
+  visible: boolean;
+  x: number;
+  y: number;
+  group: Group | null;
+}>({
+  visible: false,
+  x: 0,
+  y: 0,
+  group: null,
+});
 
 const loginForm = reactive({ email: "", password: "" });
 const registerForm = reactive({
@@ -585,6 +633,18 @@ function notify(message: string) {
 function formatTime(input?: string | null) {
   if (!input) return "";
   return new Date(input).toLocaleString("zh-CN", { hour12: false });
+}
+
+/**
+ * 判断消息是否超过撤回时限（2分钟）
+ * @param msg 消息对象
+ * @returns true: 已超时，不可撤回; false: 未超时，可以撤回
+ */
+function isMessageTimeout(msg: Message | null): boolean {
+  if (!msg || !msg.created_at) return false;
+  const createdTime = new Date(msg.created_at).getTime();
+  const now = Date.now();
+  return now - createdTime > 2 * 60 * 1000; // 超过2分钟
 }
 
 function safeParseContent(content: unknown) {
@@ -986,6 +1046,7 @@ function connectWs() {
       return;
     }
     if (type === "refresh_friend_request_count") {
+      console.log("[WebSocket] 收到好友请求通知，准备刷新好友请求列表");
       await loadFriendRequests();
       return;
     }
@@ -1061,12 +1122,17 @@ function handleContextAction(action: "copy" | "quote" | "revoke" | "delete") {
         notify("只能撤回自己的消息");
         break;
       }
+      // 前端时间校验：超过2分钟不允许撤回
+      if (isMessageTimeout(msg)) {
+        notify("消息超过两分钟，不可撤回");
+        break;
+      }
+      // 发送撤回请求到后端
       sendWs({
         type: "revoke",
         group_id: selectedGroupId.value,
         message_id: msg.id,
       });
-      notify("消息已撤回");
       break;
 
     case "delete":
@@ -1235,6 +1301,114 @@ async function dissolveCurrentGroup() {
   await loadGroups();
 }
 
+// ==================== 新增：会话置顶功能 ====================
+
+/**
+ * 处理群组右键菜单
+ * @param event 鼠标事件
+ * @param group 群组数据
+ */
+function handleGroupContextMenu(event: MouseEvent, group: Group) {
+  event.preventDefault();
+  groupContextMenu.value = {
+    visible: true,
+    x: event.clientX,
+    y: event.clientY,
+    group: group,
+  };
+}
+
+/**
+ * 隐藏群组右键菜单
+ */
+function hideGroupContextMenu() {
+  groupContextMenu.value.visible = false;
+}
+
+/**
+ * 切换群组置顶状态
+ * @param isPinned true=置顶, false=取消置顶
+ */
+async function togglePin(isPinned: boolean) {
+  const group = groupContextMenu.value.group;
+  if (!group) return;
+
+  try {
+    await toggleGroupPin(group.id, isPinned);
+    notify(isPinned ? "已置顶" : "已取消置顶");
+    await loadGroups();  // 刷新群组列表
+  } catch (error) {
+    notify(isPinned ? "置顶失败" : "取消置顶失败");
+  }
+
+  hideGroupContextMenu();
+}
+
+/**
+ * 清空会话聊天记录（只影响当前用户视角）
+ */
+async function handleClearGroupMessages() {
+  const group = groupContextMenu.value.group;
+  if (!group) return;
+
+  // 二次确认
+  if (!confirm(`确定要清空"${group.name || '该会话'}"的聊天记录吗？\n\n清空后，您将看不到清空时间之前的消息，但其他用户的聊天记录不受影响。`)) {
+    hideGroupContextMenu();
+    return;
+  }
+
+  try {
+    const result = await clearGroupMessages(group.id);
+    notify(`会话已清空（${result.cleared_at}）`);
+
+    // 清空当前显示的消息列表
+    if (selectedGroupId.value === group.id) {
+      currentMessages.value = [];
+    }
+
+    // 刷新群组列表
+    await loadGroups();
+  } catch (error) {
+    notify("清空会话失败");
+  }
+
+  hideGroupContextMenu();
+}
+
+/**
+ * 清空当前打开会话的聊天记录（工具栏按钮入口）
+ */
+async function handleClearCurrentGroupMessages() {
+  const group = selectedGroup.value;
+  if (!group) return;
+
+  // 二次确认
+  if (!confirm(`确定要清空"${group.name || '该会话'}"的聊天记录吗？\n\n清空后，您将看不到清空时间之前的消息，但其他用户的聊天记录不受影响。`)) {
+    return;
+  }
+
+  try {
+    const result = await clearGroupMessages(group.id);
+    notify(`会话已清空（${result.cleared_at}）`);
+
+    // 清空当前显示的消息列表
+    currentMessages.value = [];
+
+    // 刷新群组列表
+    await loadGroups();
+  } catch (error) {
+    notify("清空会话失败");
+  }
+}
+
+/**
+ * 隐藏所有右键菜单（用于点击其他地方关闭菜单）
+ */
+function hideAllContextMenus() {
+  hideContextMenu();
+  hideGroupContextMenu();
+}
+
 async function startPrivateChat(user: User) {
   if (user.id === currentUser.value?.id) {
     notify("不能和自己发起私聊");
@@ -1279,11 +1453,11 @@ onMounted(async () => {
     await initSession();
   }
   // 点击其他地方关闭右键菜单
-  document.addEventListener("click", hideContextMenu);
+  document.addEventListener("click", hideAllContextMenus);
 });
 
 onBeforeUnmount(() => {
   ws.value?.close();
-  document.removeEventListener("click", hideContextMenu);
+  document.removeEventListener("click", hideAllContextMenus);
 });
 </script>

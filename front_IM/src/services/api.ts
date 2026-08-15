@@ -225,3 +225,28 @@ export function revokeToken() {
 export function pingConfirm() {
   return unwrap(http.get("/api/auth/confirm"));
 }
+
+// 新增：会话置顶接口
+/**
+ * 设置或取消会话置顶
+ * @param groupId 群组ID
+ * @param isPinned true=置顶, false=取消置顶
+ * @returns 置顶设置结果
+ */
+export function toggleGroupPin(groupId: string, isPinned: boolean) {
+  return unwrap<{ group_id: string; is_pinned: boolean; pinned_at: string | null }>(
+    http.post(`/api/group/${groupId}/pin`, { is_pinned: isPinned })
+  );
+}
+
+// 新增：清空会话消息接口
+/**
+ * 清空会话消息（只影响当前用户视角）
+ * @param groupId 群组ID
+ * @returns 清空结果，包含清空时间点
+ */
+export function clearGroupMessages(groupId: string) {
+  return unwrap<{ group_id: string; cleared_at: string }>(
+    http.post(`/api/group/${groupId}/clear`)
+  );
+}

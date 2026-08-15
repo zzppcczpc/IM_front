@@ -45,6 +45,9 @@ export interface Group {
   unread_count?: number;
   members?: User[];
   total_unread?: number;
+  // 新增：用户维度的置顶设置
+  is_pinned?: boolean;       // 是否置顶
+  pinned_at?: string | null; // 置顶时间
 }
 
 export interface Message {
