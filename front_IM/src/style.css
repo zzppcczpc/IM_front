@@ -526,3 +526,19 @@ a {
     border-top: 1px solid #e2e8f0;
   }
 }
+
+/* 消息已读状态 */
+.message-read-status {
+  font-size: 12px;
+  text-align: right;
+  margin-top: 4px;
+  padding-right: 4px;
+}
+
+.message-read-status .read {
+  color: #1890ff;
+}
+
+.message-read-status .unread {
+  color: #999;
+}

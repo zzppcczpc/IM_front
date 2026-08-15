@@ -372,6 +372,11 @@
                         {{ renderContent(msg.content) }}
                       </template>
                     </div>
+                    <!-- 已读状态显示 -->
+                    <div v-if="isMessageRead(msg) !== null" class="message-read-status">
+                      <span v-if="isMessageRead(msg)" class="read">已读</span>
+                      <span v-else class="unread">未读</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -636,6 +641,67 @@ function formatTime(input?: string | null) {
 }
 
 /**
+ * 判断私聊消息是否已读
+ * @param msg 消息对象
+ * @returns true=已读, false=未读, null=非私聊或不适用
+ */
+function isMessageRead(msg: Message): boolean | null {
+  // 只在私聊中显示已读状态
+  if (selectedGroup.value?.type !== "private") {
+    return null;
+  }
+
+  // 只判断自己发的消息
+  if (msg.sender_id !== currentUser.value?.id) {
+    return null;
+  }
+
+  // read_list 包含对方ID则已读
+  const otherMemberId = selectedGroup.value.member_ids.find(id => id !== currentUser.value?.id);
+  if (!otherMemberId) {
+    return null;
+  }
+
+  return msg.read_list.includes(otherMemberId);
+}
+
+/**
+ * 自动标记私聊消息为已读
+ * 场景：打开私聊窗口、收到新消息
+ */
+async function autoMarkReadInPrivateChat() {
+  // 只在私聊中自动标记
+  if (selectedGroup.value?.type !== "private") {
+    return;
+  }
+
+  // 只标记对方发的、自己未读的消息
+  const otherUserId = selectedGroup.value.member_ids.find(id => id !== currentUser.value?.id);
+  if (!otherUserId) {
+    return;
+  }
+
+  // 筛选需要标记已读的消息ID
+  const unreadMessageIds = currentMessages.value
+    .filter(msg =>
+      msg.sender_id === otherUserId &&  // 对方发的
+      !msg.read_list.includes(currentUser.value!.id)  // 自己未读
+    )
+    .map(msg => msg.id);
+
+  if (unreadMessageIds.length === 0) {
+    return;
+  }
+
+  // 发送已读标记
+  sendWs({
+    type: "mark_read",
+    group_id: selectedGroupId.value,
+    message_ids: unreadMessageIds,
+  });
+}
+
+/**
  * 判断消息是否超过撤回时限（2分钟）
  * @param msg 消息对象
  * @returns true: 已超时，不可撤回; false: 未超时，可以撤回
@@ -847,6 +913,10 @@ async function openGroup(groupId: string) {
   }
   await loadGroups();
   await loadOnlineUsers(groupId);
+
+  // 私聊自动标记已读
+  await autoMarkReadInPrivateChat();
+
   scrollToBottom();
 }
 
@@ -901,6 +971,19 @@ function applyIncomingMessage(message: Message) {
   if (normalized.group_id === selectedGroupId.value) {
     // 修改：实时消息走统一去重排序；删除原来的直接追加，避免晚到的消息插错位置。
     mergeCurrentMessages([normalized]);
+
+    // 私聊收到新消息时自动标记已读
+    if (selectedGroup.value?.type === "private" &&
+        normalized.sender_id !== currentUser.value?.id) {
+      // 异步发送，不阻塞UI
+      setTimeout(() => {
+        sendWs({
+          type: "mark_read",
+          group_id: normalized.group_id,
+          message_ids: [normalized.id],
+        });
+      }, 100);
+    }
   }
   if (list && list.id !== selectedGroupId.value) {
     list.unread_count = (list.unread_count || 0) + 1;
@@ -1002,6 +1085,28 @@ function connectWs() {
       return;
     }
     if (type === "message_sent") {
+      return;
+    }
+    // 处理已读通知
+    if (type === "message_read" && data.content && typeof data.content === "object") {
+      const groupId = String(data.group_id || "");
+      const readerId = String((data.content as { reader_id?: string }).reader_id || "");
+      const messageIds = (data.content as { message_ids?: string[] }).message_ids || [];
+
+      // 只处理当前打开的私聊
+      if (groupId === selectedGroupId.value) {
+        // 更新消息列表中对应消息的 read_list
+        for (const msgId of messageIds) {
+          const msgIndex = currentMessages.value.findIndex(m => m.id === msgId);
+          if (msgIndex !== -1) {
+            const msg = currentMessages.value[msgIndex];
+            if (!msg.read_list.includes(readerId)) {
+              msg.read_list = [...msg.read_list, readerId];
+            }
+          }
+        }
+        notify("对方已读消息");
+      }
       return;
     }
     if (type === "message_revoke" && data.content && typeof data.content === "object") {
