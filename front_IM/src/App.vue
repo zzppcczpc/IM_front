@@ -320,6 +320,10 @@
                 <span class="muted">
                   {{ selectedGroup.type === 'private' ? '私聊' : '群聊' }} · {{ selectedGroup.id }}
                 </span>
+                <!-- 输入中提示 -->
+                <span v-if="typingUsers.size > 0" class="typing-indicator">
+                  {{ Array.from(typingUsers.values()).map(t => t.username).join('、') }} 正在输入...
+                </span>
               </div>
               <div class="toolbar">
                 <button class="btn ghost" @click="loadGroupMessages(selectedGroup.id)" :disabled="loadingHistory">
@@ -491,7 +495,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import {
   MessageSquareMore,
   SendHorizontal,
@@ -562,6 +566,13 @@ const onlineUsers = ref<Array<{ user_id: string; username: string; device_count:
 const draftMessage = ref("");
 const userSearchQuery = ref("");
 const friendSearchQuery = ref("");
+
+// 输入中状态管理
+const typingUsers = ref<Map<string, { userId: string; username: string }>>(new Map());
+let typingSendTimer: ReturnType<typeof setTimeout> | null = null;
+let lastTypingSendTime = 0;
+const TYPING_THROTTLE_MS = 3000; // 3秒节流
+const TYPING_STOP_DELAY_MS = 5000; // 5秒无输入发送停止
 const showCreateGroup = ref(false);
 const toast = ref("");
 const messageScrollRef = ref<HTMLElement | null>(null);
@@ -634,6 +645,46 @@ function notify(message: string) {
     toast.value = "";
   }, 2600);
 }
+
+// 监听输入框变化，发送输入中状态
+watch(draftMessage, (newValue) => {
+  if (!selectedGroupId.value || selectedGroup.value?.type !== "private") return;
+  if (!currentUser.value) return;
+
+  // 输入框有内容
+  if (newValue.trim()) {
+    const now = Date.now();
+    // 节流：距离上次发送超过3秒才发送
+    if (now - lastTypingSendTime > TYPING_THROTTLE_MS) {
+      sendWs({
+        type: "typing",
+        group_id: selectedGroupId.value,
+        is_typing: true,
+      });
+      lastTypingSendTime = now;
+    }
+
+    // 重置停止输入定时器
+    if (typingSendTimer) clearTimeout(typingSendTimer);
+    typingSendTimer = setTimeout(() => {
+      if (selectedGroupId.value) {
+        sendWs({
+          type: "typing",
+          group_id: selectedGroupId.value,
+          is_typing: false,
+        });
+      }
+    }, TYPING_STOP_DELAY_MS);
+  } else {
+    // 输入框清空，立即发送停止
+    if (typingSendTimer) clearTimeout(typingSendTimer);
+    sendWs({
+      type: "typing",
+      group_id: selectedGroupId.value,
+      is_typing: false,
+    });
+  }
+});
 
 function formatTime(input?: string | null) {
   if (!input) return "";
@@ -896,6 +947,13 @@ async function createChatGroup() {
 }
 
 async function openGroup(groupId: string) {
+  // 清除之前的输入中状态
+  typingUsers.value.clear();
+  if (typingSendTimer) {
+    clearTimeout(typingSendTimer);
+    typingSendTimer = null;
+  }
+
   selectedGroupId.value = groupId;
   selectedGroup.value = groups.value.find((g) => g.id === groupId) || (await getGroupDetail(groupId));
   try {
@@ -1085,6 +1143,21 @@ function connectWs() {
       return;
     }
     if (type === "message_sent") {
+      return;
+    }
+    // 处理输入中状态
+    if (type === "typing" && data.content && typeof data.content === "object") {
+      const { user_id, username, is_typing } = data.content as {
+        user_id: string;
+        username: string;
+        is_typing: boolean;
+      };
+
+      if (is_typing) {
+        typingUsers.value.set(user_id, { userId: user_id, username });
+      } else {
+        typingUsers.value.delete(user_id);
+      }
       return;
     }
     // 处理已读通知

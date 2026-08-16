@@ -542,3 +542,17 @@ a {
 .message-read-status .unread {
   color: #999;
 }
+
+/* 输入中状态提示 */
+.typing-indicator {
+  font-size: 13px;
+  color: #64748b;
+  font-style: italic;
+  animation: pulse 1.5s ease-in-out infinite;
+  margin-left: 8px;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
