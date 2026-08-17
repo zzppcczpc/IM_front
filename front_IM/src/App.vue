@@ -418,6 +418,30 @@
           </section>
 
           <aside class="right-rail">
+            <div v-if="selectedGroup.type !== 'private'" class="hint-card announcement-card">
+              <div class="panel-title">
+                <span>群公告</span>
+                <button v-if="canEditAnnouncement" class="btn ghost small" @click="openAnnouncementEditor()">
+                  发布
+                </button>
+              </div>
+              <div v-if="announcements.length === 0" class="announcement-empty muted">
+                暂无公告
+              </div>
+              <div v-else class="announcement-list">
+                <div v-for="announcement in announcements" :key="announcement.id" class="announcement-item">
+                  <div class="announcement-content">{{ announcement.content }}</div>
+                  <div class="announcement-meta">
+                    <span>{{ announcement.updated_by_username || announcement.created_by_username || '未知用户' }}</span>
+                    <span>{{ formatTime(announcement.updated_at) }}</span>
+                  </div>
+                  <div v-if="canEditAnnouncement" class="announcement-actions">
+                    <button class="btn ghost small" @click="openAnnouncementEditor(announcement)">编辑</button>
+                    <button class="btn ghost small danger-text" @click="removeAnnouncement(announcement.id)">删除</button>
+                  </div>
+                </div>
+              </div>
+            </div>
             <div class="hint-card">
               <div class="panel-title">
                 <span>状态</span>
@@ -426,6 +450,70 @@
                 <div>群内在线：{{ onlineUsers.length }}</div>
                 <div>未读：{{ selectedGroup.unread_count || 0 }}</div>
                 <div>消息数：{{ currentMessages.length }}</div>
+              </div>
+            </div>
+
+            <div v-if="selectedGroup.type !== 'private'" class="hint-card member-role-card">
+              <div class="panel-title">
+                <span>群成员</span>
+                <div class="member-role-actions">
+                  <button
+                    v-if="canManageMute"
+                    class="btn ghost small"
+                    @click="toggleAllMute"
+                  >
+                    {{ allMuteActive ? '关闭全员禁言' : '全员禁言10分钟' }}
+                  </button>
+                  <button class="btn ghost small" @click="loadGroupMembers(selectedGroup.id)">刷新</button>
+                </div>
+              </div>
+              <div v-if="allMuteActive" class="mute-tip">
+                全员禁言中，截止 {{ formatTime(selectedGroup.all_muted_until) }}
+              </div>
+              <div class="member-role-list">
+                <div
+                  v-for="member in selectedGroup.members || []"
+                  :key="member.id || member.user_id"
+                  class="member-role-item"
+                >
+                  <div>
+                    <strong>{{ member.username }}</strong>
+                    <span class="role-badge" :class="`role-${member.role || 'member'}`">
+                      {{ roleLabel(member.role) }}
+                    </span>
+                    <span v-if="activeMuteFor(member.id || member.user_id)" class="mute-badge">
+                      禁言中
+                    </span>
+                  </div>
+                  <div v-if="activeMuteFor(member.id || member.user_id)" class="mute-tip">
+                    截止 {{ formatTime(activeMuteFor(member.id || member.user_id)?.muted_until) }}
+                  </div>
+                  <div class="member-action-row">
+                    <button
+                      v-if="canManageMute && canMuteMember(member)"
+                      class="btn ghost small"
+                      @click="toggleMemberMute(member)"
+                    >
+                      {{ activeMuteFor(member.id || member.user_id) ? '解除禁言' : '禁言10分钟' }}
+                    </button>
+                  </div>
+                  <div v-if="canManageRoles && member.id !== currentUser?.id && member.user_id !== currentUser?.id">
+                    <button
+                      v-if="member.role === 'admin'"
+                      class="btn ghost small"
+                      @click="changeMemberAdmin(member.id || member.user_id || '', false)"
+                    >
+                      取消管理员
+                    </button>
+                    <button
+                      v-else-if="member.role === 'member'"
+                      class="btn ghost small"
+                      @click="changeMemberAdmin(member.id || member.user_id || '', true)"
+                    >
+                      设为管理员
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -459,6 +547,34 @@
   </div>
 
   <div v-if="toast" class="toast">{{ toast }}</div>
+
+  <div
+    v-if="showAnnouncementEditor"
+    class="modal-overlay"
+    @click.self="closeAnnouncementEditor"
+  >
+    <div class="modal-card">
+      <div class="modal-header">
+        <strong>{{ editingAnnouncementId ? '编辑群公告' : '发布群公告' }}</strong>
+        <button class="btn ghost small" @click="closeAnnouncementEditor">关闭</button>
+      </div>
+      <div class="modal-body">
+        <textarea
+          v-model="announcementDraft"
+          rows="6"
+          maxlength="2000"
+          placeholder="输入群公告内容"
+        ></textarea>
+        <div class="muted">{{ announcementDraft.length }}/2000</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn ghost" @click="closeAnnouncementEditor">取消</button>
+        <button class="btn primary" :disabled="savingAnnouncement" @click="saveAnnouncement">
+          {{ savingAnnouncement ? '保存中...' : '保存' }}
+        </button>
+      </div>
+    </div>
+  </div>
 
   <!-- 消息右键菜单 -->
   <div
@@ -506,11 +622,15 @@ import {
   API_BASE,
   WS_BASE,
   avatarUrl,
+  createGroupAnnouncement,
   createGroup,
+  deleteGroupAnnouncement,
   deleteFriend as apiDeleteFriend,
   dissolveGroup,
   downloadFileUrl,
   friendRequestCount,
+  getGroupAnnouncements,
+  getGroupMembers,
   getFriendRequestList,
   getFriends,
   getGroupMessages,
@@ -521,6 +641,8 @@ import {
   leaveGroup,
   login,
   markAllRead,
+  muteAllGroupMembers,
+  muteGroupMember,
   queryUsers,
   register,
   resetPassword,
@@ -530,7 +652,12 @@ import {
   sendEmailCode,
   sendFriendRequest,
   setAuthToken,
+  setGroupAdmin,
   setStoredUser,
+  unsetGroupAdmin,
+  unmuteAllGroupMembers,
+  unmuteGroupMember,
+  updateGroupAnnouncement,
   updateUser,
   uploadAvatar,
   uploadGroupFile,
@@ -541,7 +668,7 @@ import {
   toggleGroupPin,  // 新增：置顶接口
   clearGroupMessages,  // 新增：清空会话消息接口
 } from "./services/api";
-import type { AuthMode, FriendRequest, Group, LoginUser, Message, User } from "./types";
+import type { AuthMode, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, LoginUser, Message, MutedMember, User } from "./types";
 
 const authed = ref(false);
 const authMode = ref<AuthMode | "reset">("login");
@@ -563,6 +690,15 @@ const selectedGroupId = ref("");
 const selectedGroup = ref<Group | null>(null);
 const currentMessages = ref<Message[]>([]);
 const onlineUsers = ref<Array<{ user_id: string; username: string; device_count: number }>>([]);
+
+// 当前打开群的公告列表。它和聊天消息分开存，避免公告刷新影响消息列表。
+const announcements = ref<GroupAnnouncement[]>([]);
+
+// 公告编辑弹窗状态：editingAnnouncementId 为 null 表示发布新公告，否则表示编辑已有公告。
+const showAnnouncementEditor = ref(false);
+const editingAnnouncementId = ref<string | null>(null);
+const announcementDraft = ref("");
+const savingAnnouncement = ref(false);
 const draftMessage = ref("");
 const userSearchQuery = ref("");
 const friendSearchQuery = ref("");
@@ -638,6 +774,39 @@ const pendingFriendRequests = computed(() => {
   return friendRequests.value.filter((req) => req.status === "pending");
 });
 
+const canEditAnnouncement = computed(() => {
+  // 前端只负责控制按钮显示；真正的权限仍以后端校验为准。
+  if (!selectedGroup.value || !currentUser.value) return false;
+  return (
+    selectedGroup.value.owner_id === currentUser.value.id ||
+    (selectedGroup.value.admin_ids || []).includes(currentUser.value.id) ||
+    (selectedGroup.value.announcement_editor_ids || []).includes(currentUser.value.id)
+  );
+});
+
+const canManageRoles = computed(() => {
+  return selectedGroup.value?.owner_id === currentUser.value?.id;
+});
+
+const canManageMute = computed(() => {
+  if (!selectedGroup.value || !currentUser.value) return false;
+  return (
+    selectedGroup.value.owner_id === currentUser.value.id ||
+    (selectedGroup.value.admin_ids || []).includes(currentUser.value.id)
+  );
+});
+
+const allMuteActive = computed(() => {
+  const mutedUntil = selectedGroup.value?.all_muted_until;
+  return !!mutedUntil && new Date(mutedUntil).getTime() > Date.now();
+});
+
+function roleLabel(role?: GroupMemberRole) {
+  if (role === "owner") return "群主";
+  if (role === "admin") return "管理员";
+  return "成员";
+}
+
 function notify(message: string) {
   toast.value = message;
   window.clearTimeout((notify as unknown as { t?: number }).t);
@@ -647,6 +816,28 @@ function notify(message: string) {
 }
 
 // 监听输入框变化，发送输入中状态
+function activeMuteFor(userId?: string) {
+  if (!userId) return null;
+  const now = Date.now();
+  return (selectedGroup.value?.muted_members || []).find((item) => {
+    return item.user_id === userId && new Date(item.muted_until).getTime() > now;
+  }) || null;
+}
+
+function canMuteMember(member: GroupMemberWithRole) {
+  if (!selectedGroup.value || !currentUser.value) return false;
+  const currentRole = selectedGroup.value.owner_id === currentUser.value.id
+    ? "owner"
+    : (selectedGroup.value.admin_ids || []).includes(currentUser.value.id)
+      ? "admin"
+      : "member";
+  const targetId = member.id || member.user_id;
+
+  if (!targetId || targetId === currentUser.value.id || member.role === "owner") return false;
+  if (currentRole === "owner") return true;
+  return currentRole === "admin" && member.role === "member";
+}
+
 watch(draftMessage, (newValue) => {
   if (!selectedGroupId.value || selectedGroup.value?.type !== "private") return;
   if (!currentUser.value) return;
@@ -882,7 +1073,141 @@ async function loadGroups() {
     await openGroup(groups.value[0].id);
   } else {
     const current = groups.value.find((g) => g.id === selectedGroupId.value) || null;
-    selectedGroup.value = current;
+    selectedGroup.value = current
+      ? {
+          ...selectedGroup.value,
+          ...current,
+          members: selectedGroup.value?.members || current.members,
+          admin_ids: selectedGroup.value?.admin_ids || current.admin_ids,
+          announcement_editor_ids: selectedGroup.value?.announcement_editor_ids || current.announcement_editor_ids,
+          muted_members: selectedGroup.value?.muted_members || current.muted_members,
+          all_muted_until: selectedGroup.value?.all_muted_until || current.all_muted_until,
+          all_muted_by: selectedGroup.value?.all_muted_by || current.all_muted_by,
+          all_muted_at: selectedGroup.value?.all_muted_at || current.all_muted_at,
+        }
+      : null;
+  }
+}
+
+function sortAnnouncements(items: GroupAnnouncement[]) {
+  // 公告按更新时间倒序展示，用户最先看到最新通知。
+  return [...items].sort((a, b) => {
+    const left = new Date(a.updated_at || a.created_at).getTime();
+    const right = new Date(b.updated_at || b.created_at).getTime();
+    return right - left;
+  });
+}
+
+function upsertAnnouncement(announcement: GroupAnnouncement) {
+  // WebSocket 和接口返回都可能带来同一条公告，所以这里统一做“有则替换，无则插入”。
+  const existingIndex = announcements.value.findIndex((item) => item.id === announcement.id);
+  if (existingIndex >= 0) {
+    announcements.value[existingIndex] = announcement;
+  } else {
+    announcements.value = [announcement, ...announcements.value];
+  }
+  announcements.value = sortAnnouncements(announcements.value);
+}
+
+async function loadAnnouncements(groupId = selectedGroupId.value) {
+  // 打开私聊时清空公告；只有群聊才调用公告接口。
+  if (!groupId || selectedGroup.value?.type === "private") {
+    announcements.value = [];
+    return;
+  }
+  try {
+    announcements.value = sortAnnouncements(await getGroupAnnouncements(groupId));
+  } catch {
+    announcements.value = [];
+  }
+}
+
+function applyMemberRole(userId: string, role: GroupMemberRole) {
+  if (!selectedGroup.value?.members) return;
+  selectedGroup.value.members = selectedGroup.value.members.map((member) => {
+    const memberId = member.id || member.user_id;
+    return memberId === userId ? { ...member, role } : member;
+  });
+}
+
+async function loadGroupMembers(groupId = selectedGroupId.value) {
+  if (!groupId || selectedGroup.value?.type === "private") return;
+  try {
+    const data = await getGroupMembers(groupId);
+    if (selectedGroup.value && selectedGroup.value.id === groupId) {
+      selectedGroup.value.members = data.members;
+    }
+  } catch {
+    notify("加载群成员失败");
+  }
+}
+
+async function changeMemberAdmin(userId: string, makeAdmin: boolean) {
+  if (!selectedGroupId.value || !userId) return;
+  try {
+    const result = makeAdmin
+      ? await setGroupAdmin(selectedGroupId.value, userId)
+      : await unsetGroupAdmin(selectedGroupId.value, userId);
+    applyMemberRole(result.user_id, result.role);
+    notify(makeAdmin ? "管理员已设置" : "管理员已取消");
+  } catch {
+    notify(makeAdmin ? "设置管理员失败" : "取消管理员失败");
+  }
+}
+
+function upsertMemberMute(mute: MutedMember) {
+  if (!selectedGroup.value) return;
+  const list = selectedGroup.value.muted_members || [];
+  selectedGroup.value.muted_members = [
+    ...list.filter((item) => item.user_id !== mute.user_id),
+    mute,
+  ];
+}
+
+function removeMemberMute(userId: string) {
+  if (!selectedGroup.value) return;
+  selectedGroup.value.muted_members = (selectedGroup.value.muted_members || []).filter((item) => item.user_id !== userId);
+}
+
+async function toggleMemberMute(member: GroupMemberWithRole) {
+  const userId = member.id || member.user_id;
+  if (!selectedGroupId.value || !userId) return;
+
+  try {
+    const currentMute = activeMuteFor(userId);
+    if (currentMute) {
+      await unmuteGroupMember(selectedGroupId.value, userId);
+      removeMemberMute(userId);
+      notify("成员禁言已解除");
+    } else {
+      const result = await muteGroupMember(selectedGroupId.value, userId, 10);
+      upsertMemberMute(result);
+      notify("成员已禁言10分钟");
+    }
+  } catch {
+    notify("禁言操作失败");
+  }
+}
+
+async function toggleAllMute() {
+  if (!selectedGroup.value || !selectedGroupId.value) return;
+
+  try {
+    if (allMuteActive.value) {
+      await unmuteAllGroupMembers(selectedGroupId.value);
+      selectedGroup.value.all_muted_until = null;
+      selectedGroup.value.all_muted_by = null;
+      selectedGroup.value.all_muted_at = null;
+      notify("全员禁言已关闭");
+    } else {
+      const result = await muteAllGroupMembers(selectedGroupId.value, 10);
+      selectedGroup.value.all_muted_until = result.muted_until;
+      selectedGroup.value.all_muted_by = result.muted_by;
+      selectedGroup.value.all_muted_at = result.muted_at;
+      notify("全员禁言已开启10分钟");
+    }
+  } catch {
+    notify("全员禁言操作失败");
   }
 }
 
@@ -956,6 +1281,7 @@ async function openGroup(groupId: string) {
 
   selectedGroupId.value = groupId;
   selectedGroup.value = groups.value.find((g) => g.id === groupId) || (await getGroupDetail(groupId));
+  announcements.value = [];
   try {
     const payload = await getGroupMessages({ id: groupId, page: 1, page_size: 50 });
     // 修改：打开群聊时走统一排序入口；删除原来的直接赋值，避免接口顺序影响页面顺序。
@@ -964,6 +1290,8 @@ async function openGroup(groupId: string) {
   } catch {
     currentMessages.value = [];
   }
+  await loadAnnouncements(groupId);
+  await loadGroupMembers(groupId);
   try {
     await markAllRead(groupId);
   } catch {
@@ -1187,6 +1515,77 @@ function connectWs() {
       currentMessages.value = currentMessages.value.map((item) =>
         item.id === targetId ? { ...item, is_revoke: true } : item,
       );
+      return;
+    }
+    if (type === "group_announcement_updated" && data.content && typeof data.content === "object") {
+      const groupId = String(data.group_id || "");
+      const content = data.content as {
+        action?: string;
+        announcement?: GroupAnnouncement;
+        announcement_id?: string;
+      };
+
+      if (groupId === selectedGroupId.value) {
+        if ((content.action === "created" || content.action === "updated") && content.announcement) {
+          upsertAnnouncement(content.announcement);
+          notify(content.action === "created" ? "收到新群公告" : "群公告已更新");
+        }
+        if (content.action === "deleted" && content.announcement_id) {
+          announcements.value = announcements.value.filter((item) => item.id !== content.announcement_id);
+          notify("群公告已删除");
+        }
+      }
+      return;
+    }
+    if (type === "group_member_role_updated" && data.content && typeof data.content === "object") {
+      const groupId = String(data.group_id || "");
+      const content = data.content as {
+        user_id?: string;
+        role?: GroupMemberRole;
+      };
+      if (groupId === selectedGroupId.value && content.user_id && content.role) {
+        applyMemberRole(content.user_id, content.role);
+        notify("群成员角色已更新");
+      }
+      return;
+    }
+    if (type === "group_member_muted" && data.content && typeof data.content === "object") {
+      const groupId = String(data.group_id || "");
+      const content = data.content as MutedMember;
+      if (groupId === selectedGroupId.value && content.user_id) {
+        upsertMemberMute(content);
+        notify("群成员禁言状态已更新");
+      }
+      return;
+    }
+    if (type === "group_member_unmuted" && data.content && typeof data.content === "object") {
+      const groupId = String(data.group_id || "");
+      const content = data.content as { user_id?: string };
+      if (groupId === selectedGroupId.value && content.user_id) {
+        removeMemberMute(content.user_id);
+        notify("群成员禁言已解除");
+      }
+      return;
+    }
+    if (type === "group_all_muted" && data.content && typeof data.content === "object") {
+      const groupId = String(data.group_id || "");
+      const content = data.content as { muted_by?: string; muted_at?: string; muted_until?: string };
+      if (groupId === selectedGroupId.value && selectedGroup.value && content.muted_until) {
+        selectedGroup.value.all_muted_until = content.muted_until;
+        selectedGroup.value.all_muted_by = content.muted_by || null;
+        selectedGroup.value.all_muted_at = content.muted_at || null;
+        notify("全员禁言已开启");
+      }
+      return;
+    }
+    if (type === "group_all_unmuted") {
+      const groupId = String(data.group_id || "");
+      if (groupId === selectedGroupId.value && selectedGroup.value) {
+        selectedGroup.value.all_muted_until = null;
+        selectedGroup.value.all_muted_by = null;
+        selectedGroup.value.all_muted_at = null;
+        notify("全员禁言已关闭");
+      }
       return;
     }
     if (type === "message_deleted" && data.content && typeof data.content === "object") {
@@ -1477,6 +1876,58 @@ async function dissolveCurrentGroup() {
   selectedGroupId.value = "";
   selectedGroup.value = null;
   await loadGroups();
+}
+
+function openAnnouncementEditor(announcement?: GroupAnnouncement) {
+  // 有 announcement 表示编辑；没有则是发布。弹窗复用同一个 textarea。
+  editingAnnouncementId.value = announcement?.id || null;
+  announcementDraft.value = announcement?.content || "";
+  showAnnouncementEditor.value = true;
+}
+
+function closeAnnouncementEditor() {
+  showAnnouncementEditor.value = false;
+  editingAnnouncementId.value = null;
+  announcementDraft.value = "";
+  savingAnnouncement.value = false;
+}
+
+async function saveAnnouncement() {
+  // 根据 editingAnnouncementId 决定走“新增”还是“修改”接口。
+  if (!selectedGroupId.value) return;
+  const content = announcementDraft.value.trim();
+  if (!content) {
+    notify("请输入群公告内容");
+    return;
+  }
+
+  savingAnnouncement.value = true;
+  try {
+    const saved = editingAnnouncementId.value
+      ? await updateGroupAnnouncement(selectedGroupId.value, editingAnnouncementId.value, content)
+      : await createGroupAnnouncement(selectedGroupId.value, content);
+    upsertAnnouncement(saved);
+    notify(editingAnnouncementId.value ? "群公告已更新" : "群公告已发布");
+    closeAnnouncementEditor();
+  } catch {
+    notify(editingAnnouncementId.value ? "更新群公告失败" : "发布群公告失败");
+  } finally {
+    savingAnnouncement.value = false;
+  }
+}
+
+async function removeAnnouncement(announcementId: string) {
+  // 删除是不可逆操作，先让用户确认，再调用后端删除。
+  if (!selectedGroupId.value) return;
+  if (!confirm("确定删除这条群公告吗？")) return;
+
+  try {
+    await deleteGroupAnnouncement(selectedGroupId.value, announcementId);
+    announcements.value = announcements.value.filter((item) => item.id !== announcementId);
+    notify("群公告已删除");
+  } catch {
+    notify("删除群公告失败");
+  }
 }
 
 // ==================== 新增：会话置顶功能 ====================

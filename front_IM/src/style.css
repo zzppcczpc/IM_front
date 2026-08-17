@@ -294,6 +294,16 @@ a {
   color: #fff;
 }
 
+.btn.small {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.danger-text {
+  color: #dc2626;
+}
+
 .chat-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 280px;
@@ -413,7 +423,7 @@ a {
 
 .right-rail {
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto auto auto auto 1fr;
   gap: 12px;
   min-width: 0;
   min-height: 0;
@@ -435,6 +445,177 @@ a {
 .scroll {
   min-height: 0;
   overflow: auto;
+}
+
+.announcement-card {
+  min-height: 0;
+}
+
+.announcement-list {
+  display: grid;
+  gap: 10px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.announcement-item {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.announcement-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+}
+
+.announcement-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.announcement-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.announcement-empty {
+  padding: 8px 0;
+  text-align: center;
+}
+
+.member-role-list {
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.member-role-item {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.member-role-item > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.member-role-actions,
+.member-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.role-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.role-owner {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.role-admin {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.role-member {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.mute-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mute-tip {
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.38);
+}
+
+.modal-card {
+  width: min(520px, 100%);
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.22);
+}
+
+.modal-header,
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.modal-header {
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.modal-body {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+}
+
+.modal-body textarea {
+  width: 100%;
+  min-height: 140px;
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  resize: vertical;
+  outline: none;
+}
+
+.modal-footer {
+  justify-content: flex-end;
+  border-top: 1px solid #e2e8f0;
 }
 
 .toast {

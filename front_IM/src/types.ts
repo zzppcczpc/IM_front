@@ -1,5 +1,6 @@
 export type AuthMode = "login" | "register";
 export type GroupType = "group" | "private";
+export type GroupMemberRole = "owner" | "admin" | "member";
 
 export interface ApiResponse<T = unknown> {
   code: number;
@@ -33,6 +34,30 @@ export interface LoginUser extends User {
   token_type: string;
 }
 
+export interface GroupAnnouncement {
+  id: string;
+  group_id: string;
+  content: string;
+  created_by: string;
+  created_by_username?: string | null;
+  created_at: string;
+  updated_by: string;
+  updated_by_username?: string | null;
+  updated_at: string;
+}
+
+export interface GroupMemberWithRole extends User {
+  user_id?: string;
+  role: GroupMemberRole;
+}
+
+export interface MutedMember {
+  user_id: string;
+  muted_by: string;
+  muted_at: string;
+  muted_until: string;
+}
+
 export interface Group {
   id: string;
   name: string;
@@ -43,11 +68,18 @@ export interface Group {
   created_at: string;
   type: GroupType;
   unread_count?: number;
-  members?: User[];
+  members?: GroupMemberWithRole[];
   total_unread?: number;
   // 新增：用户维度的置顶设置
   is_pinned?: boolean;       // 是否置顶
   pinned_at?: string | null; // 置顶时间
+  admin_ids?: string[];
+  announcements?: GroupAnnouncement[];
+  announcement_editor_ids?: string[];
+  muted_members?: MutedMember[];
+  all_muted_until?: string | null;
+  all_muted_by?: string | null;
+  all_muted_at?: string | null;
 }
 
 export interface Message {

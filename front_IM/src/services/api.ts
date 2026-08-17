@@ -3,6 +3,9 @@ import type {
   ApiResponse,
   FriendRequest,
   Group,
+  GroupAnnouncement,
+  GroupMemberRole,
+  GroupMemberWithRole,
   LoginUser,
   Message,
   Paginated,
@@ -248,5 +251,69 @@ export function toggleGroupPin(groupId: string, isPinned: boolean) {
 export function clearGroupMessages(groupId: string) {
   return unwrap<{ group_id: string; cleared_at: string }>(
     http.post(`/api/group/${groupId}/clear`)
+  );
+}
+
+export function getGroupAnnouncements(groupId: string) {
+  return unwrap<GroupAnnouncement[]>(http.get(`/api/group/${groupId}/announcements`));
+}
+
+export function createGroupAnnouncement(groupId: string, content: string) {
+  return unwrap<GroupAnnouncement>(
+    http.post(`/api/group/${groupId}/announcements`, { content })
+  );
+}
+
+export function updateGroupAnnouncement(groupId: string, announcementId: string, content: string) {
+  return unwrap<GroupAnnouncement>(
+    http.put(`/api/group/${groupId}/announcements/${announcementId}`, { content })
+  );
+}
+
+export function deleteGroupAnnouncement(groupId: string, announcementId: string) {
+  return unwrap<{ group_id: string; announcement_id: string }>(
+    http.delete(`/api/group/${groupId}/announcements/${announcementId}`)
+  );
+}
+
+export function getGroupMembers(groupId: string) {
+  return unwrap<{ group_id: string; members: GroupMemberWithRole[] }>(
+    http.get(`/api/group/${groupId}/members`)
+  );
+}
+
+export function setGroupAdmin(groupId: string, userId: string) {
+  return unwrap<{ group_id: string; user_id: string; role: GroupMemberRole }>(
+    http.post(`/api/group/${groupId}/admins/${userId}`)
+  );
+}
+
+export function unsetGroupAdmin(groupId: string, userId: string) {
+  return unwrap<{ group_id: string; user_id: string; role: GroupMemberRole }>(
+    http.delete(`/api/group/${groupId}/admins/${userId}`)
+  );
+}
+
+export function muteGroupMember(groupId: string, userId: string, minutes = 10) {
+  return unwrap<{ group_id: string; user_id: string; muted_by: string; muted_at: string; muted_until: string }>(
+    http.post(`/api/group/${groupId}/mute/${userId}`, { minutes })
+  );
+}
+
+export function unmuteGroupMember(groupId: string, userId: string) {
+  return unwrap<{ group_id: string; user_id: string }>(
+    http.delete(`/api/group/${groupId}/mute/${userId}`)
+  );
+}
+
+export function muteAllGroupMembers(groupId: string, minutes = 10) {
+  return unwrap<{ group_id: string; muted_by: string; muted_at: string; muted_until: string }>(
+    http.post(`/api/group/${groupId}/mute-all`, { minutes })
+  );
+}
+
+export function unmuteAllGroupMembers(groupId: string) {
+  return unwrap<{ group_id: string }>(
+    http.delete(`/api/group/${groupId}/mute-all`)
   );
 }
