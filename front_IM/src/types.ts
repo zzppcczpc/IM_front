@@ -111,3 +111,23 @@ export interface FriendRequest {
   created_at: string;
   handled_at?: string | null;
 }
+
+export interface SearchResult {
+  id: string;
+  content: string;
+  type: string;
+  sender_id: string;
+  sender_username: string;
+  sender_avatar?: string | null;
+  created_at: string;
+}
+
+export interface SearchResponse {
+  group_id: string;
+  keyword: string;
+  items: SearchResult[];
+  page: number;
+  page_size: number;
+  total: number;
+  has_more: boolean;
+}

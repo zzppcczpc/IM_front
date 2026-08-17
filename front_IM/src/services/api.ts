@@ -9,6 +9,7 @@ import type {
   LoginUser,
   Message,
   Paginated,
+  SearchResponse,
   User,
 } from "../types";
 
@@ -315,5 +316,11 @@ export function muteAllGroupMembers(groupId: string, minutes = 10) {
 export function unmuteAllGroupMembers(groupId: string) {
   return unwrap<{ group_id: string }>(
     http.delete(`/api/group/${groupId}/mute-all`)
+  );
+}
+
+export function searchMessages(params: { group_id: string; keyword: string; page?: number; page_size?: number }) {
+  return unwrap<SearchResponse>(
+    http.get("/api/chat/search", { params })
   );
 }

@@ -329,6 +329,7 @@
                 <button class="btn ghost" @click="loadGroupMessages(selectedGroup.id)" :disabled="loadingHistory">
                   {{ loadingHistory ? '加载中...' : '历史' }}
                 </button>
+                <button class="btn ghost" @click="openSearchPanel">搜索</button>
                 <button class="btn ghost" @click="loadOnlineUsers(selectedGroup.id)">在线成员</button>
                 <button class="btn ghost" @click="readCurrentGroup">已读</button>
                 <button class="btn ghost" @click="handleClearCurrentGroupMessages">清空记录</button>
@@ -342,8 +343,12 @@
                 <div
                   v-for="msg in currentMessages"
                   :key="msg.id"
+                  :data-message-id="msg.id"
                   class="message-row"
-                  :class="{ self: msg.sender_id === currentUser?.id && !msg.is_revoke }"
+                  :class="{
+                    self: msg.sender_id === currentUser?.id && !msg.is_revoke,
+                    highlighted: highlightedMessageId === msg.id
+                  }"
                   @contextmenu.prevent="showMessageContextMenu($event, msg)"
                 >
                   <!-- 撤回消息：居中显示 -->
@@ -608,6 +613,66 @@
       删除
     </button>
   </div>
+
+  <!-- 消息搜索面板 -->
+  <div
+    v-if="showSearchPanel"
+    class="modal-overlay"
+    @click.self="closeSearchPanel"
+  >
+    <div class="modal-card" style="max-width: 600px; max-height: 80vh; display: flex; flex-direction: column">
+      <div class="modal-header">
+        <strong>搜索消息</strong>
+        <button class="btn ghost small" @click="closeSearchPanel">关闭</button>
+      </div>
+      <div class="modal-body" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px">
+        <div class="field">
+          <label>关键词</label>
+          <div class="toolbar">
+            <input
+              v-model.trim="searchKeyword"
+              placeholder="输入搜索关键词（至少2个字符）"
+              @keyup.enter="doSearch()"
+              style="flex: 1"
+            />
+            <button class="btn primary" :disabled="searchLoading || searchKeyword.length < 2" @click="doSearch()">
+              {{ searchLoading ? '搜索中...' : '搜索' }}
+            </button>
+          </div>
+        </div>
+
+        <div v-if="searchTotal > 0" class="muted" style="text-align: center">
+          找到 {{ searchTotal }} 条结果
+        </div>
+
+        <div v-if="searchResults.length > 0" class="list" style="flex: 1; overflow-y: auto">
+          <div
+            v-for="result in searchResults"
+            :key="result.id"
+            class="list-item"
+            style="cursor: pointer"
+            @click="jumpToMessage(result.id)"
+          >
+            <div class="list-item-head">
+              <strong>{{ result.sender_username }}</strong>
+              <span class="muted">{{ formatTime(result.created_at) }}</span>
+            </div>
+            <div class="search-result-content" v-html="highlightKeyword(result.content)"></div>
+          </div>
+        </div>
+
+        <div v-else-if="!searchLoading && searchKeyword.length >= 2 && searchTotal === 0" class="muted" style="text-align: center; padding: 20px">
+          未找到匹配的消息
+        </div>
+
+        <div v-if="searchHasMore" style="text-align: center; padding: 10px">
+          <button class="btn ghost" :disabled="searchLoading" @click="loadMoreSearchResults()">
+            {{ searchLoading ? '加载中...' : '加载更多' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -667,8 +732,9 @@ import {
   markRead,
   toggleGroupPin,  // 新增：置顶接口
   clearGroupMessages,  // 新增：清空会话消息接口
+  searchMessages,  // 新增：消息搜索接口
 } from "./services/api";
-import type { AuthMode, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, LoginUser, Message, MutedMember, User } from "./types";
+import type { AuthMode, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, LoginUser, Message, MutedMember, User, SearchResult, SearchResponse } from "./types";
 
 const authed = ref(false);
 const authMode = ref<AuthMode | "reset">("login");
@@ -702,6 +768,16 @@ const savingAnnouncement = ref(false);
 const draftMessage = ref("");
 const userSearchQuery = ref("");
 const friendSearchQuery = ref("");
+
+// 消息搜索相关状态
+const showSearchPanel = ref(false);
+const searchKeyword = ref("");
+const searchResults = ref<SearchResult[]>([]);
+const searchLoading = ref(false);
+const searchTotal = ref(0);
+const searchPage = ref(1);
+const searchHasMore = ref(false);
+const highlightedMessageId = ref<string | null>(null); // 高亮显示的消息ID
 
 // 输入中状态管理
 const typingUsers = ref<Map<string, { userId: string; username: string }>>(new Map());
@@ -2030,6 +2106,175 @@ async function handleClearCurrentGroupMessages() {
   }
 }
 
+// ==================== 新增：消息搜索功能 ====================
+
+/**
+ * 打开搜索面板
+ */
+function openSearchPanel() {
+  showSearchPanel.value = true;
+  searchKeyword.value = "";
+  searchResults.value = [];
+  searchTotal.value = 0;
+  searchPage.value = 1;
+  searchHasMore.value = false;
+}
+
+/**
+ * 关闭搜索面板
+ */
+function closeSearchPanel() {
+  showSearchPanel.value = false;
+  searchKeyword.value = "";
+  searchResults.value = [];
+  searchTotal.value = 0;
+  searchPage.value = 1;
+  searchHasMore.value = false;
+}
+
+/**
+ * 执行消息搜索
+ */
+async function doSearch(page = 1) {
+  if (!selectedGroupId.value || !searchKeyword.value.trim()) return;
+
+  searchLoading.value = true;
+  searchPage.value = page;
+
+  try {
+    const response = await searchMessages({
+      group_id: selectedGroupId.value,
+      keyword: searchKeyword.value.trim(),
+      page: page,
+      page_size: 20,
+    });
+
+    searchResults.value = page === 1 ? response.items : [...searchResults.value, ...response.items];
+    searchTotal.value = response.total;
+    searchHasMore.value = response.has_more;
+  } catch (error: any) {
+    notify(error?.response?.data?.message || "搜索失败");
+    searchResults.value = [];
+    searchTotal.value = 0;
+    searchHasMore.value = false;
+  } finally {
+    searchLoading.value = false;
+  }
+}
+
+/**
+ * 加载更多搜索结果
+ */
+async function loadMoreSearchResults() {
+  if (searchLoading.value || !searchHasMore.value) return;
+  await doSearch(searchPage.value + 1);
+}
+
+/**
+ * 高亮搜索关键词
+ */
+function highlightKeyword(content: string): string {
+  if (!searchKeyword.value.trim()) return content;
+  const regex = new RegExp(`(${searchKeyword.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+  return content.replace(regex, '<mark>$1</mark>');
+}
+
+/**
+ * 点击搜索结果，跳转到消息位置
+ */
+async function jumpToMessage(messageId: string) {
+  if (!messageId) return;
+
+  // 检查消息是否在当前加载的消息列表中
+  const msgIndex = currentMessages.value.findIndex(msg => msg.id === messageId);
+
+  if (msgIndex !== -1) {
+    // 消息已加载，直接滚动到该消息
+    scrollToMessageById(messageId);
+    highlightMessage(messageId);
+  } else {
+    // 消息未加载，需要加载更多历史消息
+    notify("正在加载历史消息...");
+    await loadHistoryUntilMessage(messageId);
+  }
+
+  // 关闭搜索面板
+  closeSearchPanel();
+}
+
+/**
+ * 滚动到指定消息ID的消息元素
+ */
+function scrollToMessageById(messageId: string) {
+  nextTick(() => {
+    const messageElements = messageScrollRef.value?.querySelectorAll('.message-row');
+    if (!messageElements) return;
+
+    messageElements.forEach((el) => {
+      const msgId = el.getAttribute('data-message-id');
+      if (msgId === messageId) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    });
+  });
+}
+
+/**
+ * 高亮显示指定消息（3秒后取消高亮）
+ */
+function highlightMessage(messageId: string) {
+  highlightedMessageId.value = messageId;
+  setTimeout(() => {
+    highlightedMessageId.value = null;
+  }, 3000);
+}
+
+/**
+ * 加载历史消息直到找到目标消息
+ */
+async function loadHistoryUntilMessage(targetMessageId: string) {
+  if (!selectedGroupId.value || !ws.value) return;
+
+  // 循环加载历史消息，直到找到目标消息或没有更多消息
+  let found = false;
+  let attempts = 0;
+  const maxAttempts = 10; // 最多尝试加载10次
+
+  while (!found && attempts < maxAttempts) {
+    // 检查当前消息列表中是否有目标消息
+    if (currentMessages.value.some(msg => msg.id === targetMessageId)) {
+      found = true;
+      break;
+    }
+
+    // 发送获取历史消息请求
+    const payload: { type: string; group_id: string; limit: number; before_id?: string } = {
+      type: "get_history",
+      group_id: selectedGroupId.value,
+      limit: 50,
+    };
+
+    if (nextCursor.value) {
+      payload.before_id = nextCursor.value;
+    }
+
+    ws.value.send(JSON.stringify(payload));
+
+    // 等待一段时间让消息加载
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    attempts++;
+  }
+
+  if (found) {
+    scrollToMessageById(targetMessageId);
+    highlightMessage(targetMessageId);
+    notify("已跳转到目标消息");
+  } else {
+    notify("未找到该消息，可能已被删除");
+  }
+}
+
 /**
  * 隐藏所有右键菜单（用于点击其他地方关闭菜单）
  */
@@ -2090,3 +2335,34 @@ onBeforeUnmount(() => {
   document.removeEventListener("click", hideAllContextMenus);
 });
 </script>
+
+<style scoped>
+/* 消息高亮样式 */
+.message-row.highlighted {
+  animation: highlight-pulse 3s ease-out;
+  background-color: rgba(255, 215, 0, 0.3);
+}
+
+@keyframes highlight-pulse {
+  0% {
+    background-color: rgba(255, 215, 0, 0.5);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+/* 搜索结果内容样式 */
+.search-result-content {
+  padding: 8px 0;
+  color: #555;
+  line-height: 1.5;
+}
+
+.search-result-content mark {
+  background-color: #ffd700;
+  color: #000;
+  padding: 1px 3px;
+  border-radius: 2px;
+}
+</style>
