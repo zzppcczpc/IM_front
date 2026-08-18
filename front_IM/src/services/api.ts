@@ -200,9 +200,12 @@ export function uploadGroupFile(groupId: string, file: File) {
 }
 
 export function uploadGroupMedia(groupId: string, file: File, duration?: number) {
+  // 语音/图片这类二进制文件不能放 JSON 里传，所以用 FormData 走 multipart 上传。
   const form = new FormData();
+  // file 是真实的语音文件；group_id 告诉后端这条语音发到哪个群。
   form.append("file", file);
   form.append("group_id", groupId);
+  // duration 是录音时长，后端会存到消息表里，前端播放器展示 0:05 会用。
   if (typeof duration === "number") {
     form.append("duration", String(duration));
   }

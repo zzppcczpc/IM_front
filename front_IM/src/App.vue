@@ -370,7 +370,35 @@
                         </a>
                       </template>
                       <template v-else-if="isAudioMessage(msg)">
-                        <audio controls :src="downloadUrlForMessage(msg)" />
+                        <div class="custom-audio-player">
+                          <audio
+                            ref="audioElements"
+                            :src="downloadUrlForMessage(msg)"
+                            :data-message-id="msg.id"
+                            @loadedmetadata="onAudioLoaded(msg.id, $event)"
+                            @timeupdate="onAudioTimeUpdate(msg.id, $event)"
+                            @play="onAudioPlay(msg.id)"
+                            @pause="onAudioPause(msg.id)"
+                            @ended="onAudioEnded(msg.id)"
+                          ></audio>
+                          <button class="audio-play-btn" @click="toggleAudioPlay(msg.id)">
+                            {{ getAudioPlayerState(msg.id)?.playing ? '⏸' : '▶' }}
+                          </button>
+                          <div class="audio-progress-bar" @click="seekAudio(msg.id, $event)">
+                            <div
+                              class="audio-progress-fill"
+                              :style="{ width: getAudioProgress(msg.id) + '%' }"
+                            ></div>
+                          </div>
+                          <div class="audio-time">
+                            <template v-if="getAudioPlayerState(msg.id)?.playing">
+                              {{ formatAudioTime(getAudioPlayerState(msg.id)?.currentTime || 0) }} / {{ formatAudioTime(getAudioPlayerState(msg.id)?.duration || msg.duration || 0) }}
+                            </template>
+                            <template v-else>
+                              {{ formatAudioTime(getAudioPlayerState(msg.id)?.duration || msg.duration || 0) }}
+                            </template>
+                          </div>
+                        </div>
                       </template>
                       <template v-else-if="isFileMessage(msg)">
                         <a :href="downloadUrlForMessage(msg)" target="_blank" rel="noreferrer">
@@ -408,16 +436,42 @@
                 <span class="muted">引用：</span>
                 <span>{{ citeMessage.sender_username }}: {{ renderContent(citeMessage.content) }}</span>
               </div>
+
+              <!-- 录音状态显示 -->
+              <div v-if="isRecording" class="recording-indicator">
+                <div class="recording-status">
+                  <span class="recording-dot"></span>
+                  <span class="recording-time">正在录音 {{ formatDuration(recordingDuration) }}</span>
+                </div>
+                <div class="recording-actions">
+                  <button class="btn ghost" @click="cancelRecording">取消</button>
+                  <button class="btn primary" @click="stopRecording">
+                    <SendHorizontal :size="16" /> 发送
+                  </button>
+                </div>
+              </div>
+
               <div class="composer-row">
                 <textarea
                   v-model="draftMessage"
                   placeholder="输入消息..."
                   @keydown.enter.exact.prevent="sendTextMessage"
                   @keydown.enter.shift.stop
+                  :disabled="isRecording"
                 />
-                <button class="btn primary" @click="sendTextMessage">
-                  <SendHorizontal :size="16" /> 发送
-                </button>
+                <div class="composer-buttons">
+                  <button
+                    class="btn ghost"
+                    :class="{ active: isRecording }"
+                    @click="isRecording ? stopRecording() : startRecording()"
+                    :title="isRecording ? '停止录音' : '开始录音'"
+                  >
+                    <Mic :size="16" />
+                  </button>
+                  <button class="btn primary" @click="sendTextMessage" :disabled="isRecording">
+                    <SendHorizontal :size="16" /> 发送
+                  </button>
+                </div>
               </div>
             </div>
           </section>
@@ -679,6 +733,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import {
   MessageSquareMore,
+  Mic,
   SendHorizontal,
   UserRound,
   Users,
@@ -778,6 +833,17 @@ const searchTotal = ref(0);
 const searchPage = ref(1);
 const searchHasMore = ref(false);
 const highlightedMessageId = ref<string | null>(null); // 高亮显示的消息ID
+
+// 录音相关状态
+const isRecording = ref(false);
+const recordingDuration = ref(0);
+const recordingTimer = ref<number | null>(null);
+const mediaRecorder = ref<MediaRecorder | null>(null);
+const audioChunks = ref<Blob[]>([]);
+const recordingStartTime = ref<number>(0);
+
+// 自定义音频播放器状态：{ messageId: { playing, currentTime, duration } }
+const audioPlayerStates = ref<Map<string, { playing: boolean; currentTime: number; duration: number }>>(new Map());
 
 // 输入中状态管理
 const typingUsers = ref<Map<string, { userId: string; username: string }>>(new Map());
@@ -1055,6 +1121,7 @@ function isImageMessage(msg: Message) {
 }
 
 function isAudioMessage(msg: Message) {
+  // 后端创建语音消息时 type 会是 audio/webm，所以前端靠 type 判断是否显示播放器。
   return msg.type.startsWith("audio/") || msg.type.includes("audio");
 }
 
@@ -1073,6 +1140,8 @@ function fileNameOf(msg: Message) {
 
 function downloadUrlForMessage(msg: Message) {
   const parsed = safeParseContent(msg.content);
+  // 语音消息的 content 是文件 ID；图片/文件消息的 content 可能是 { id, filename }。
+  // 统一取出文件 ID 后，拼成后端下载地址给 img/audio/a 标签使用。
   const id =
     typeof parsed === "string"
       ? parsed
@@ -2229,6 +2298,268 @@ function highlightMessage(messageId: string) {
   }, 3000);
 }
 
+// ==================== 新增：语音录音功能 ====================
+
+/**
+ * 开始录音
+ */
+async function startRecording() {
+  try {
+    // 1. 先向浏览器申请麦克风权限，拿到一条音频输入流。
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    // 2. MediaRecorder 负责把麦克风声音录成浏览器可播放的 webm/opus 音频。
+    const recorder = new MediaRecorder(stream, {
+      mimeType: 'audio/webm;codecs=opus'
+    });
+
+    mediaRecorder.value = recorder;
+    audioChunks.value = [];
+
+    // 3. 录音过程中浏览器会一小段一小段吐出 Blob，这里先临时收集起来。
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        audioChunks.value.push(event.data);
+      }
+    };
+
+    recorder.onstop = async () => {
+      // 4. 停止录音后要释放麦克风，不然浏览器会一直占用录音设备。
+      stream.getTracks().forEach(track => track.stop());
+
+      // 5. 把刚刚收集到的多个音频片段合成一个完整语音文件。
+      const audioBlob = new Blob(audioChunks.value, { type: 'audio/webm' });
+
+      if (selectedGroupId.value && audioBlob.size > 0) {
+        const duration = recordingDuration.value;
+        // 6. 后端接收的是文件上传，所以这里把 Blob 包装成 File。
+        const file = new File([audioBlob], `voice_${Date.now()}.webm`, {
+          type: 'audio/webm'
+        });
+
+        try {
+          // 7. 上传语音文件、群ID、语音时长；后端会保存文件并生成一条语音消息。
+          await uploadGroupMedia(selectedGroupId.value, file, duration);
+          notify("语音消息已发送");
+
+          // 8. 上传接口会通过 WebSocket 广播消息；这里再刷新一次历史，兜底保证自己页面能看到最新语音。
+          setTimeout(async () => {
+            if (selectedGroupId.value) {
+              try {
+                const payload = await getGroupMessages({ id: selectedGroupId.value, page: 1, page_size: 50 });
+                setCurrentMessages(payload.items || []);
+                scrollToBottom();
+              } catch (e) {
+                console.error("刷新消息失败:", e);
+              }
+            }
+          }, 800);
+        } catch (error) {
+          console.error("上传失败:", error);
+          notify("语音消息发送失败");
+        }
+      }
+
+      isRecording.value = false;
+      recordingDuration.value = 0;
+      audioChunks.value = [];
+    };
+
+    // 每 100ms 取一次录音片段，片段最终会在 onstop 里合成完整文件。
+    recorder.start(100);
+    isRecording.value = true;
+    recordingStartTime.value = Date.now();
+    recordingDuration.value = 0;
+
+    // 前端自己计时，用来显示“正在录音 0:05”，也会作为 duration 传给后端。
+    recordingTimer.value = window.setInterval(() => {
+      recordingDuration.value = Math.floor((Date.now() - recordingStartTime.value) / 1000);
+
+      // 限制最长录音 60 秒，到了自动停止并发送。
+      if (recordingDuration.value >= 60) {
+        stopRecording();
+      }
+    }, 100);
+
+    notify("开始录音");
+  } catch (error) {
+    notify("无法访问麦克风，请检查权限设置");
+    console.error("录音错误:", error);
+  }
+}
+
+/**
+ * 停止录音
+ */
+function stopRecording() {
+  if (mediaRecorder.value && isRecording.value) {
+    mediaRecorder.value.stop();
+
+    if (recordingTimer.value) {
+      clearInterval(recordingTimer.value);
+      recordingTimer.value = null;
+    }
+  }
+}
+
+/**
+ * 取消录音
+ */
+function cancelRecording() {
+  if (mediaRecorder.value && isRecording.value) {
+    mediaRecorder.value.stop();
+
+    // 清除计时器
+    if (recordingTimer.value) {
+      clearInterval(recordingTimer.value);
+      recordingTimer.value = null;
+    }
+
+    // 清空音频数据，不发送
+    audioChunks.value = [];
+    isRecording.value = false;
+    recordingDuration.value = 0;
+
+    notify("已取消录音");
+  }
+}
+
+/**
+ * 格式化录音时长显示
+ */
+function formatDuration(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+// ==================== 自定义音频播放器 ====================
+
+/**
+ * 获取音频元素
+ */
+function getAudioElement(messageId: string): HTMLAudioElement | null {
+  const el = document.querySelector(`audio[data-message-id="${messageId}"]`) as HTMLAudioElement;
+  return el || null;
+}
+
+/**
+ * 获取音频播放器状态
+ */
+function getAudioPlayerState(messageId: string) {
+  return audioPlayerStates.value.get(messageId) || null;
+}
+
+/**
+ * 获取播放进度百分比
+ */
+function getAudioProgress(messageId: string): number {
+  const state = audioPlayerStates.value.get(messageId);
+  if (!state || !state.duration) return 0;
+  return (state.currentTime / state.duration) * 100;
+}
+
+/**
+ * 格式化音频时间
+ */
+function formatAudioTime(seconds: number): string {
+  const s = Math.floor(seconds);
+  const mins = Math.floor(s / 60);
+  const secs = s % 60;
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+/**
+ * 音频元数据加载完成
+ */
+function onAudioLoaded(messageId: string, event: Event) {
+  const audio = event.target as HTMLAudioElement;
+  const msg = currentMessages.value.find(m => m.id === messageId);
+  // WebM 流式音频 duration 可能是 Infinity，用后端存的 duration 字段兜底
+  const duration = isFinite(audio.duration) ? audio.duration : (msg?.duration || 0);
+  audioPlayerStates.value.set(messageId, {
+    playing: false,
+    currentTime: 0,
+    duration: duration,
+  });
+}
+
+/**
+ * 音频播放进度更新
+ */
+function onAudioTimeUpdate(messageId: string, event: Event) {
+  const audio = event.target as HTMLAudioElement;
+  const state = audioPlayerStates.value.get(messageId);
+  if (state) {
+    state.currentTime = audio.currentTime;
+    if (isFinite(audio.duration) && audio.duration > state.duration) {
+      state.duration = audio.duration;
+    }
+  }
+}
+
+/**
+ * 音频开始播放
+ */
+function onAudioPlay(messageId: string) {
+  const state = audioPlayerStates.value.get(messageId);
+  if (state) state.playing = true;
+}
+
+/**
+ * 音频暂停
+ */
+function onAudioPause(messageId: string) {
+  const state = audioPlayerStates.value.get(messageId);
+  if (state) state.playing = false;
+}
+
+/**
+ * 音频播放结束
+ */
+function onAudioEnded(messageId: string) {
+  const state = audioPlayerStates.value.get(messageId);
+  if (state) {
+    state.playing = false;
+    state.currentTime = 0;
+  }
+}
+
+/**
+ * 切换播放/暂停
+ */
+function toggleAudioPlay(messageId: string) {
+  const audio = getAudioElement(messageId);
+  if (!audio) return;
+
+  // 暂停其他正在播放的音频
+  audioPlayerStates.value.forEach((state, id) => {
+    if (id !== messageId && state.playing) {
+      const otherAudio = getAudioElement(id);
+      if (otherAudio) otherAudio.pause();
+    }
+  });
+
+  if (audio.paused) {
+    audio.play();
+  } else {
+    audio.pause();
+  }
+}
+
+/**
+ * 点击进度条跳转
+ */
+function seekAudio(messageId: string, event: MouseEvent) {
+  const audio = getAudioElement(messageId);
+  if (!audio || !audio.duration) return;
+
+  const bar = event.currentTarget as HTMLElement;
+  const rect = bar.getBoundingClientRect();
+  const ratio = (event.clientX - rect.left) / rect.width;
+  audio.currentTime = ratio * audio.duration;
+}
+
 /**
  * 加载历史消息直到找到目标消息
  */
@@ -2364,5 +2695,123 @@ onBeforeUnmount(() => {
   color: #000;
   padding: 1px 3px;
   border-radius: 2px;
+}
+
+/* 录音相关样式 */
+.recording-indicator {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background-color: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+
+.recording-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.recording-dot {
+  width: 12px;
+  height: 12px;
+  background-color: #dc3545;
+  border-radius: 50%;
+  animation: recording-pulse 1s ease-in-out infinite;
+}
+
+@keyframes recording-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(1.2);
+  }
+}
+
+.recording-time {
+  color: #856404;
+  font-weight: 500;
+}
+
+.recording-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.composer-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.composer-buttons .btn.active {
+  background-color: #dc3545;
+  color: white;
+}
+
+/* 自定义音频播放器样式 */
+.custom-audio-player {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #f5f5f5;
+  border-radius: 20px;
+  min-width: 200px;
+  max-width: 320px;
+}
+
+.custom-audio-player audio {
+  display: none;
+}
+
+.audio-play-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: #4a90d9;
+  color: white;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.audio-play-btn:hover {
+  background: #357abd;
+}
+
+.audio-progress-bar {
+  flex: 1;
+  height: 6px;
+  background: #ddd;
+  border-radius: 3px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.audio-progress-fill {
+  height: 100%;
+  background: #4a90d9;
+  border-radius: 3px;
+  transition: width 0.1s linear;
+}
+
+.audio-time {
+  font-size: 12px;
+  color: #666;
+  min-width: 45px;
+  text-align: right;
+  flex-shrink: 0;
 }
 </style>
