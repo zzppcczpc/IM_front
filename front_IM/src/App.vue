@@ -392,10 +392,10 @@
                           </div>
                           <div class="audio-time">
                             <template v-if="getAudioPlayerState(msg.id)?.playing">
-                              {{ formatAudioTime(getAudioPlayerState(msg.id)?.currentTime || 0) }} / {{ formatAudioTime(getAudioPlayerState(msg.id)?.duration || msg.duration || 0) }}
+                              {{ formatAudioTime(getAudioPlayerState(msg.id)?.currentTime || 0) }} / {{ formatAudioTime(getAudioPlayerState(msg.id)?.duration || getAudioDuration(msg)) }}
                             </template>
                             <template v-else>
-                              {{ formatAudioTime(getAudioPlayerState(msg.id)?.duration || msg.duration || 0) }}
+                              {{ formatAudioTime(getAudioPlayerState(msg.id)?.duration || getAudioDuration(msg)) }}
                             </template>
                           </div>
                         </div>
@@ -1106,49 +1106,101 @@ function safeParseContent(content: unknown) {
   }
 }
 
-function renderContent(content: unknown) {
+/**
+ * 渲染消息内容为可读文本
+ * 用于文本消息、引用预览、复制等场景
+ */
+function renderContent(content: unknown): string {
   const parsed = safeParseContent(content);
   if (typeof parsed === "string") return parsed;
   if (parsed && typeof parsed === "object") {
-    if ("filename" in parsed) return `${String((parsed as Record<string, unknown>).filename)} `;
-    return JSON.stringify(parsed);
+    const obj = parsed as Record<string, unknown>;
+    // 新格式：显示文件名或文件ID
+    if ("filename" in obj) return String(obj.filename);
+    if ("file_id" in obj) return `文件: ${String(obj.file_id).slice(0, 8)}...`;
   }
   return String(parsed ?? "");
 }
 
-function isImageMessage(msg: Message) {
-  return msg.type.startsWith("image/") || (typeof msg.content === "object" && msg.content !== null && "filename" in msg.content && /image/i.test(msg.type));
+/**
+ * 消息类型判断函数
+ * 支持新统一类型（text/image/file/audio）和旧 MIME 类型兼容
+ */
+
+function normalizeMessageType(msg: Message): string {
+  // 已经是统一类型
+  if (["text", "image", "audio", "file"].includes(msg.type)) {
+    return msg.type;
+  }
+  // 兼容旧消息：MIME 类型转换
+  if (msg.type.startsWith("image/")) return "image";
+  if (msg.type.startsWith("audio/")) return "audio";
+  return "file";
 }
 
-function isAudioMessage(msg: Message) {
-  // 后端创建语音消息时 type 会是 audio/webm，所以前端靠 type 判断是否显示播放器。
-  return msg.type.startsWith("audio/") || msg.type.includes("audio");
+function isImageMessage(msg: Message): boolean {
+  return normalizeMessageType(msg) === "image";
 }
 
-function isFileMessage(msg: Message) {
-  return /file|application|pdf|word|excel|octet-stream/i.test(msg.type);
+function isAudioMessage(msg: Message): boolean {
+  return normalizeMessageType(msg) === "audio";
 }
 
-function fileNameOf(msg: Message) {
+function isFileMessage(msg: Message): boolean {
+  return normalizeMessageType(msg) === "file";
+}
+
+/**
+ * 从消息 content 中获取文件 ID
+ * 支持新格式 {file_id: "..."} 和旧格式 {id: "..."} 或纯字符串
+ */
+function getFileId(msg: Message): string {
   const parsed = safeParseContent(msg.content);
-  if (typeof parsed === "string") return parsed;
-  if (parsed && typeof parsed === "object" && "filename" in parsed) {
-    return String((parsed as Record<string, unknown>).filename);
+  if (typeof parsed === "string") {
+    return parsed; // 旧格式：content 直接是 file_id
+  }
+  if (parsed && typeof parsed === "object") {
+    const obj = parsed as Record<string, unknown>;
+    // 新格式优先
+    if ("file_id" in obj) return String(obj.file_id);
+    // 旧格式兼容
+    if ("id" in obj) return String(obj.id);
+  }
+  return "";
+}
+
+/**
+ * 从消息 content 中获取文件名
+ */
+function getFileName(msg: Message): string {
+  const parsed = safeParseContent(msg.content);
+  if (parsed && typeof parsed === "object") {
+    const obj = parsed as Record<string, unknown>;
+    if ("filename" in obj) return String(obj.filename);
   }
   return "附件";
 }
 
-function downloadUrlForMessage(msg: Message) {
+/**
+ * 从消息 content 中获取音频时长
+ */
+function getAudioDuration(msg: Message): number {
   const parsed = safeParseContent(msg.content);
-  // 语音消息的 content 是文件 ID；图片/文件消息的 content 可能是 { id, filename }。
-  // 统一取出文件 ID 后，拼成后端下载地址给 img/audio/a 标签使用。
-  const id =
-    typeof parsed === "string"
-      ? parsed
-      : parsed && typeof parsed === "object" && "id" in parsed
-        ? String((parsed as Record<string, unknown>).id)
-        : msg.id;
-  return downloadFileUrl(id, token.value);
+  if (parsed && typeof parsed === "object") {
+    const obj = parsed as Record<string, unknown>;
+    if ("duration" in obj) return Number(obj.duration) || 0;
+  }
+  // 旧格式兼容
+  return msg.duration || 0;
+}
+
+function fileNameOf(msg: Message): string {
+  return getFileName(msg);
+}
+
+function downloadUrlForMessage(msg: Message): string {
+  const fileId = getFileId(msg);
+  return downloadFileUrl(fileId || msg.id, token.value);
 }
 
 function scrollToBottom() {
@@ -1823,9 +1875,8 @@ function handleContextAction(action: "copy" | "quote" | "revoke" | "delete") {
 
   switch (action) {
     case "copy":
-      // 复制消息内容
-      const content = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
-      navigator.clipboard.writeText(content).then(() => {
+      // 复制消息内容（渲染为可读文本）
+      navigator.clipboard.writeText(renderContent(msg.content)).then(() => {
         notify("已复制到剪贴板");
       }).catch(() => {
         notify("复制失败");
@@ -2241,11 +2292,14 @@ async function loadMoreSearchResults() {
 
 /**
  * 高亮搜索关键词
+ * 先渲染内容为可读文本，再高亮关键词
  */
-function highlightKeyword(content: string): string {
-  if (!searchKeyword.value.trim()) return content;
+function highlightKeyword(content: unknown): string {
+  // 先渲染为可读文本
+  const text = renderContent(content);
+  if (!searchKeyword.value.trim()) return text;
   const regex = new RegExp(`(${searchKeyword.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-  return content.replace(regex, '<mark>$1</mark>');
+  return text.replace(regex, '<mark>$1</mark>');
 }
 
 /**
@@ -2472,15 +2526,33 @@ function formatAudioTime(seconds: number): string {
 /**
  * 音频元数据加载完成
  */
+/**
+ * 音频元数据加载完成
+ * 从 content.duration 或 msg.duration 获取时长
+ */
 function onAudioLoaded(messageId: string, event: Event) {
   const audio = event.target as HTMLAudioElement;
   const msg = currentMessages.value.find(m => m.id === messageId);
-  // WebM 流式音频 duration 可能是 Infinity，用后端存的 duration 字段兜底
-  const duration = isFinite(audio.duration) ? audio.duration : (msg?.duration || 0);
+
+  // 新格式：duration 在 content 对象中
+  let duration = 0;
+  if (msg) {
+    const parsed = safeParseContent(msg.content);
+    if (parsed && typeof parsed === "object" && "duration" in parsed) {
+      duration = Number((parsed as Record<string, unknown>).duration) || 0;
+    } else if (msg.duration) {
+      // 旧格式：duration 在消息顶层
+      duration = msg.duration;
+    }
+  }
+
+  // WebM 流式音频 duration 可能是 Infinity，用计算出的 duration 兜底
+  const finalDuration = isFinite(audio.duration) ? audio.duration : duration;
+
   audioPlayerStates.value.set(messageId, {
     playing: false,
     currentTime: 0,
-    duration: duration,
+    duration: finalDuration,
   });
 }
 
