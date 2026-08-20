@@ -18,7 +18,7 @@ export const WS_BASE = import.meta.env.VITE_WS_BASE || "ws://127.0.0.1:8000";
 
 const http = axios.create({
   baseURL: API_BASE,
-  timeout: 20000,
+  timeout: 300000, // 5分钟，支持大文件上传
 });
 
 http.interceptors.request.use((config) => {

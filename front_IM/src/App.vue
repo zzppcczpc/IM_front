@@ -369,6 +369,16 @@
                           <img :src="downloadUrlForMessage(msg)" alt="image" />
                         </a>
                       </template>
+                      <template v-else-if="isVideoMessage(msg)">
+                        <div class="video-message">
+                          <video
+                            :src="downloadUrlForMessage(msg)"
+                            controls
+                            preload="metadata"
+                            style="max-width: 100%; max-height: 300px; border-radius: 8px;"
+                          ></video>
+                        </div>
+                      </template>
                       <template v-else-if="isAudioMessage(msg)">
                         <div class="custom-audio-player">
                           <audio
@@ -397,6 +407,47 @@
                             <template v-else>
                               {{ formatAudioTime(getAudioPlayerState(msg.id)?.duration || getAudioDuration(msg)) }}
                             </template>
+                          </div>
+                        </div>
+                      </template>
+                      <template v-else-if="isAudioFileMessage(msg)">
+                        <div class="audio-file-message">
+                          <div class="custom-audio-player audio-file-player">
+                            <audio
+                              ref="audioElements"
+                              :src="downloadUrlForMessage(msg)"
+                              :data-message-id="msg.id"
+                              @loadedmetadata="onAudioLoaded(msg.id, $event)"
+                              @timeupdate="onAudioTimeUpdate(msg.id, $event)"
+                              @play="onAudioPlay(msg.id)"
+                              @pause="onAudioPause(msg.id)"
+                              @ended="onAudioEnded(msg.id)"
+                            ></audio>
+                            <button class="audio-play-btn" @click="toggleAudioPlay(msg.id)">
+                              {{ getAudioPlayerState(msg.id)?.playing ? '' : '▶' }}
+                            </button>
+                            <div class="audio-file-details">
+                              <div class="audio-file-name-row">
+                                <span class="audio-file-icon">🎵</span>
+                                <span class="audio-file-name">{{ getFileName(msg) }}</span>
+                              </div>
+                              <div class="audio-file-progress-row">
+                                <div class="audio-progress-bar" @click="seekAudio(msg.id, $event)">
+                                  <div
+                                    class="audio-progress-fill"
+                                    :style="{ width: getAudioProgress(msg.id) + '%' }"
+                                  ></div>
+                                </div>
+                                <div class="audio-time">
+                                  <template v-if="getAudioPlayerState(msg.id)?.playing">
+                                    {{ formatAudioTime(getAudioPlayerState(msg.id)?.currentTime || 0) }} / {{ formatAudioTime(getAudioPlayerState(msg.id)?.duration || getAudioDuration(msg)) }}
+                                  </template>
+                                  <template v-else>
+                                    {{ formatAudioTime(getAudioPlayerState(msg.id)?.duration || getAudioDuration(msg)) }}
+                                  </template>
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </template>
@@ -797,6 +848,7 @@ const currentUser = ref<User | null>(getStoredUser());
 const token = ref(getStoredToken());
 const wsReady = ref(false);
 const loadingHistory = ref(false); // 新增：加载历史消息的状态
+const uploadingFile = ref(false); // 新增：文件上传中状态
 const hasMoreHistory = ref(false); // 新增：是否还有更多历史消息
 const nextCursor = ref<string | null>(null); // 新增：下一页游标
 const ws = ref<WebSocket | null>(null);
@@ -1124,16 +1176,17 @@ function renderContent(content: unknown): string {
 
 /**
  * 消息类型判断函数
- * 支持新统一类型（text/image/file/audio）和旧 MIME 类型兼容
+ * 支持新统一类型（text/image/video/file/audio）和旧 MIME 类型兼容
  */
 
 function normalizeMessageType(msg: Message): string {
   // 已经是统一类型
-  if (["text", "image", "audio", "file"].includes(msg.type)) {
+  if (["text", "image", "video", "audio", "file"].includes(msg.type)) {
     return msg.type;
   }
   // 兼容旧消息：MIME 类型转换
   if (msg.type.startsWith("image/")) return "image";
+  if (msg.type.startsWith("video/")) return "video";
   if (msg.type.startsWith("audio/")) return "audio";
   return "file";
 }
@@ -1142,8 +1195,30 @@ function isImageMessage(msg: Message): boolean {
   return normalizeMessageType(msg) === "image";
 }
 
+function isVideoMessage(msg: Message): boolean {
+  return normalizeMessageType(msg) === "video";
+}
+
 function isAudioMessage(msg: Message): boolean {
-  return normalizeMessageType(msg) === "audio";
+  // 语音消息：content 有 duration 但没有 filename
+  if (normalizeMessageType(msg) !== "audio") return false;
+  const parsed = safeParseContent(msg.content);
+  if (parsed && typeof parsed === "object") {
+    const obj = parsed as Record<string, unknown>;
+    return !("filename" in obj);
+  }
+  // 旧格式：纯字符串 content（file_id）也是语音
+  return typeof parsed === "string";
+}
+
+function isAudioFileMessage(msg: Message): boolean {
+  // 音频文件消息：content 有 filename
+  if (normalizeMessageType(msg) !== "audio") return false;
+  const parsed = safeParseContent(msg.content);
+  if (parsed && typeof parsed === "object") {
+    return "filename" in parsed;
+  }
+  return false;
 }
 
 function isFileMessage(msg: Message): boolean {
@@ -1942,13 +2017,21 @@ function sendTextMessage() {
 async function onGroupFileChange(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0];
   if (!file || !selectedGroupId.value) return;
-  if (/audio/i.test(file.type)) {
-    await uploadGroupMedia(selectedGroupId.value, file);
-  } else {
-    await uploadGroupFile(selectedGroupId.value, file);
+
+  // 重置 input，允许重复选择同一文件
+  (event.target as HTMLInputElement).value = "";
+
+  try {
+    if (/audio/i.test(file.type)) {
+      await uploadGroupMedia(selectedGroupId.value, file);
+    } else {
+      await uploadGroupFile(selectedGroupId.value, file);
+    }
+    notify("文件已上传");
+    await loadGroupMessages(selectedGroupId.value);
+  } catch (e: any) {
+    notify(e?.message || "文件上传失败，请检查文件大小和类型");
   }
-  notify("文件已上传");
-  await loadGroupMessages(selectedGroupId.value);
 }
 
 const avatarVersion = ref(0); // 新增：头像版本号，用于刷新头像缓存
@@ -2425,15 +2508,12 @@ async function startRecording() {
     recordingStartTime.value = Date.now();
     recordingDuration.value = 0;
 
-    // 前端自己计时，用来显示“正在录音 0:05”，也会作为 duration 传给后端。
+    // 前端自己计时，用来显示”正在录音 0:05”，也会作为 duration 传给后端。
     recordingTimer.value = window.setInterval(() => {
       recordingDuration.value = Math.floor((Date.now() - recordingStartTime.value) / 1000);
 
-      // 限制最长录音 60 秒，到了自动停止并发送。
-      if (recordingDuration.value >= 60) {
-        stopRecording();
-      }
-    }, 100);
+      // 不限制录音时长，用户手动停止
+    }, 1000);
 
     notify("开始录音");
   } catch (error) {
@@ -2826,6 +2906,18 @@ onBeforeUnmount(() => {
   color: white;
 }
 
+/* 视频消息样式 */
+.video-message {
+  display: inline-block;
+  max-width: 100%;
+}
+
+.video-message video {
+  display: block;
+  border-radius: 8px;
+  background: #000;
+}
+
 /* 自定义音频播放器样式 */
 .custom-audio-player {
   display: flex;
@@ -2836,6 +2928,90 @@ onBeforeUnmount(() => {
   border-radius: 20px;
   min-width: 200px;
   max-width: 320px;
+}
+
+/* 音频文件消息样式（上传的MP3等） */
+.audio-file-message {
+  max-width: 360px;
+}
+
+.audio-file-player {
+  min-width: 280px;
+  max-width: 360px;
+  padding: 10px 14px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 16px;
+}
+
+.audio-file-player .audio-play-btn {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+  border: none;
+}
+
+.audio-file-player .audio-play-btn:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.audio-file-details {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.audio-file-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.audio-file-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.audio-file-progress-row .audio-progress-bar {
+  flex: 1;
+}
+
+.audio-file-player .audio-file-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.audio-file-player .audio-file-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audio-file-player .audio-progress-bar {
+  background: rgba(255, 255, 255, 0.25);
+  height: 4px;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.audio-file-player .audio-progress-fill {
+  background: #fff;
+  height: 100%;
+  border-radius: 2px;
+}
+
+.audio-file-player .audio-time {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 45px;
+  text-align: right;
 }
 
 .custom-audio-player audio {
