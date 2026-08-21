@@ -347,16 +347,36 @@
                   class="message-row"
                   :class="{
                     self: msg.sender_id === currentUser?.id && !msg.is_revoke,
-                    highlighted: highlightedMessageId === msg.id
+                    highlighted: highlightedMessageId === msg.id,
+                    'multi-select-mode': isMultiSelectMode,
+                    'selected': isMultiSelectMode && isMessageSelected(msg.id)
                   }"
                   @contextmenu.prevent="showMessageContextMenu($event, msg)"
+                  @click="isMultiSelectMode && !msg.is_revoke && toggleMessageSelection(msg)"
                 >
+                  <!-- 多选复选框 -->
+                  <div v-if="isMultiSelectMode && !msg.is_revoke" class="message-checkbox">
+                    <input
+                      type="checkbox"
+                      :checked="isMessageSelected(msg.id)"
+                      @click.stop
+                      @change="toggleMessageSelection(msg)"
+                    />
+                  </div>
                   <!-- 撤回消息：居中显示 -->
                   <div v-if="msg.is_revoke" class="message-revoked">
                     {{ msg.sender_id === currentUser?.id ? '你撤回了一条消息' : `${msg.sender_username}撤回了一条消息` }}
                   </div>
                   <!-- 正常消息 -->
                   <div v-else class="message-bubble">
+                    <!-- 引用消息显示 -->
+                    <div v-if="msg.cite" class="message-cite" @click="scrollToMessage(msg.cite.id)">
+                      <div class="cite-line"></div>
+                      <div class="cite-content">
+                        <div class="cite-sender">{{ msg.cite.sender_username }}</div>
+                        <div class="cite-text">{{ renderContent(msg.cite.content) }}</div>
+                      </div>
+                    </div>
                     <div class="message-meta">
                       <img :src="avatarUrl(msg.sender_id)" alt="" width="20" height="20" style="border-radius: 50%" />
                       <strong>{{ msg.sender_username }}</strong>
@@ -478,9 +498,27 @@
                     <input type="file" hidden @change="onGroupFileChange" />
                   </label>
                   <button class="btn ghost" @click="loadGroupMessages(selectedGroup.id)">刷新历史</button>
+                  <!-- 多选模式切换 -->
+                  <button
+                    class="btn ghost"
+                    :class="{ active: isMultiSelectMode }"
+                    @click="toggleMultiSelectMode"
+                  >
+                    {{ isMultiSelectMode ? '取消多选' : '多选' }}
+                  </button>
                   <button v-if="citeMessage" class="btn ghost" @click="citeMessage = null">取消引用</button>
+                  <!-- 多选时显示转发按钮 -->
+                  <button
+                    v-if="isMultiSelectMode && selectedMessages.length > 0"
+                    class="btn primary"
+                    @click="batchForward"
+                  >
+                    转发 ({{ selectedMessages.length }})
+                  </button>
                 </div>
-                <div class="muted">回车发送，Shift+回车换行</div>
+                <div class="muted">
+                  {{ isMultiSelectMode ? '点击消息进行选择，然后点击"转发"按钮' : '回车发送，Shift+回车换行' }}
+                </div>
               </div>
               <!-- 引用消息提示 -->
               <div v-if="citeMessage" class="cite-preview">
@@ -698,6 +736,12 @@
     <button class="context-menu-item" @click="handleContextAction('quote')">
       引用
     </button>
+    <button class="context-menu-item" @click="handleContextAction('forward')">
+      转发
+    </button>
+    <button class="context-menu-item" @click="handleContextAction('multiselect')">
+      多选
+    </button>
     <!-- 撤回按钮：仅自己发送且未超时的消息可撤回 -->
     <button
       v-if="contextMenu.message?.sender_id === currentUser?.id && !isMessageTimeout(contextMenu.message)"
@@ -717,6 +761,51 @@
     <button class="context-menu-item danger" @click="handleContextAction('delete')">
       删除
     </button>
+  </div>
+
+  <!-- 转发到群组模态框 -->
+  <div
+    v-if="showForwardModal"
+    class="modal-overlay"
+    @click.self="closeForwardModal"
+  >
+    <div class="modal-card" style="max-width: 500px">
+      <div class="modal-header">
+        <h3>选择转发目标</h3>
+        <button class="btn ghost" @click="closeForwardModal">✕</button>
+      </div>
+      <div class="modal-body" style="max-height: 400px; overflow-y: auto">
+        <div class="muted" style="margin-bottom: 12px">
+          已选择 {{ forwardMessages.length }} 条消息，请选择目标群组：
+        </div>
+        <div class="list">
+          <button
+            v-for="group in groups"
+            :key="group.id"
+            class="list-item"
+            :class="{ active: selectedForwardGroupId === group.id }"
+            @click="selectedForwardGroupId = group.id"
+          >
+            <div class="list-item-head">
+              <strong>{{ group.name || '未命名群' }}</strong>
+            </div>
+            <div class="muted">
+              {{ group.type === 'private' ? '私聊' : '群聊' }}
+            </div>
+          </button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn ghost" @click="closeForwardModal">取消</button>
+        <button
+          class="btn primary"
+          @click="confirmForward"
+          :disabled="!selectedForwardGroupId"
+        >
+          确认转发
+        </button>
+      </div>
+    </div>
   </div>
 
   <!-- 消息搜索面板 -->
@@ -886,6 +975,10 @@ const searchPage = ref(1);
 const searchHasMore = ref(false);
 const highlightedMessageId = ref<string | null>(null); // 高亮显示的消息ID
 
+// 多选模式相关状态
+const isMultiSelectMode = ref(false);
+const selectedMessages = ref<Message[]>([]);
+
 // 录音相关状态
 const isRecording = ref(false);
 const recordingDuration = ref(0);
@@ -920,6 +1013,9 @@ const contextMenu = ref<{
   message: null,
 });
 const citeMessage = ref<Message | null>(null); // 引用的消息
+const forwardMessages = ref<Message[]>([]); // 转发的消息列表
+const showForwardModal = ref(false); // 显示转发模态框
+const selectedForwardGroupId = ref<string>(""); // 选中的目标群组ID
 
 // 新增：群组右键菜单相关（用于置顶功能）
 const groupContextMenu = ref<{
@@ -1941,7 +2037,7 @@ function hideContextMenu() {
   contextMenu.value.message = null;
 }
 
-function handleContextAction(action: "copy" | "quote" | "revoke" | "delete") {
+function handleContextAction(action: "copy" | "quote" | "forward" | "multiselect" | "revoke" | "delete") {
   const msg = contextMenu.value.message;
   if (!msg) {
     hideContextMenu();
@@ -1962,6 +2058,20 @@ function handleContextAction(action: "copy" | "quote" | "revoke" | "delete") {
       // 引用消息
       citeMessage.value = msg;
       notify("已引用消息，请在输入框中输入回复内容");
+      break;
+
+    case "forward":
+      // 转发消息 - 弹出群组选择
+      forwardMessages.value = [msg];
+      selectedForwardGroupId.value = "";
+      showForwardModal.value = true;
+      break;
+
+    case "multiselect":
+      // 进入多选模式，并选中当前消息
+      isMultiSelectMode.value = true;
+      selectedMessages.value = [msg];
+      notify("已进入多选模式，点击其他消息继续选择");
       break;
 
     case "revoke":
@@ -1995,6 +2105,108 @@ function handleContextAction(action: "copy" | "quote" | "revoke" | "delete") {
   }
 
   hideContextMenu();
+}
+
+// ========== 多选模式相关函数 ==========
+
+// 切换多选模式
+function toggleMultiSelectMode() {
+  isMultiSelectMode.value = !isMultiSelectMode.value;
+  if (!isMultiSelectMode.value) {
+    // 退出多选模式时清空选择
+    selectedMessages.value = [];
+  }
+}
+
+// 检查消息是否被选中
+function isMessageSelected(messageId: string): boolean {
+  return selectedMessages.value.some(m => m.id === messageId);
+}
+
+// 切换消息选择状态
+function toggleMessageSelection(msg: Message) {
+  const index = selectedMessages.value.findIndex(m => m.id === msg.id);
+  if (index > -1) {
+    selectedMessages.value.splice(index, 1);
+  } else {
+    selectedMessages.value.push(msg);
+  }
+}
+
+// 批量转发选中的消息
+function batchForward() {
+  if (selectedMessages.value.length === 0) {
+    notify("请先选择要转发的消息");
+    return;
+  }
+  forwardMessages.value = [...selectedMessages.value];
+  selectedForwardGroupId.value = "";
+  showForwardModal.value = true;
+  // 不清空选择，等确认后再清空
+}
+
+// 确认转发到目标群
+async function confirmForward() {
+  if (!selectedForwardGroupId.value) {
+    notify("请选择目标群组");
+    return;
+  }
+  if (forwardMessages.value.length === 0) {
+    notify("没有要转发的消息");
+    return;
+  }
+
+  try {
+    const messageIds = forwardMessages.value.map(m => m.id);
+    const res = await fetch(`${API_BASE}/api/group/messages/forward-to-group`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token.value}`,
+      },
+      body: JSON.stringify({
+        source_group_id: selectedGroupId.value,
+        target_group_id: selectedForwardGroupId.value,
+        message_ids: messageIds,
+      }),
+    });
+
+    const data = await res.json();
+    if (data.code === 200) {
+      notify(`成功转发 ${data.data.forwarded_count} 条消息`);
+      closeForwardModal();
+      // 清空选择并退出多选模式
+      selectedMessages.value = [];
+      isMultiSelectMode.value = false;
+    } else {
+      notify(data.message || "转发失败");
+    }
+  } catch (err) {
+    console.error("转发出错:", err);
+    notify("转发失败，请重试");
+  }
+}
+
+// ========== 转发功能 ==========
+
+// 关闭转发模态框
+function closeForwardModal() {
+  showForwardModal.value = false;
+  selectedForwardGroupId.value = "";
+  forwardMessages.value = [];
+}
+
+// 滚动到引用的原消息
+function scrollToMessage(messageId: string) {
+  const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
+  if (messageElement) {
+    messageElement.scrollIntoView({ behavior: "smooth", block: "center" });
+    // 高亮显示
+    highlightedMessageId.value = messageId;
+    setTimeout(() => {
+      highlightedMessageId.value = null;
+    }, 2000);
+  }
 }
 
 function sendTextMessage() {

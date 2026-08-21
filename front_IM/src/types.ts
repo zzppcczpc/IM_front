@@ -82,6 +82,13 @@ export interface Group {
   all_muted_at?: string | null;
 }
 
+export interface MessageCite {
+  id: string;
+  sender_id: string;
+  sender_username: string;
+  content: unknown;
+}
+
 export interface Message {
   id: string;
   type: string;
@@ -90,7 +97,7 @@ export interface Message {
   sender_username: string;
   sender_avatar?: string | null;
   group_id: string;
-  cite?: Record<string, unknown> | null;
+  cite?: MessageCite | null;
   at_list: string[];
   read_list: string[];
   is_revoke: boolean;
