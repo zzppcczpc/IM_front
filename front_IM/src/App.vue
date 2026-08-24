@@ -1,85 +1,96 @@
 <template>
-  <div v-if="!authed" class="auth-shell">
-    <div class="auth-card">
-      <div class="brand" style="margin-bottom: 18px">
-        <span class="brand-badge">IM</span>
-        <div>
-          <div style="font-size: 18px">Pure IM</div>
-          <div class="muted">Vue3 前端 · 对接当前后端版本</div>
+  <div v-if="!authed" class="auth-shell qq-auth-shell">
+    <div class="qq-window">
+      <div class="qq-window-actions" aria-hidden="true">
+        <span></span>
+        <span></span>
+      </div>
+
+      <div class="qq-avatar-wrap">
+        <div class="qq-avatar">
+          <span>IM</span>
         </div>
       </div>
 
-      <div class="auth-tabs">
-        <button class="btn" :class="{ primary: authMode === 'login' }" @click="authMode = 'login'">登录</button>
-        <button class="btn" :class="{ primary: authMode === 'register' }" @click="authMode = 'register'">注册</button>
-        <button class="btn" :class="{ primary: authMode === 'reset' }" @click="authMode = 'reset'">重置密码</button>
-      </div>
+      <div class="qq-auth-panel">
+        <div v-if="authMode === 'login'" class="qq-form">
+          <div class="qq-input-row">
+            <input v-model.trim="loginForm.email" placeholder="&#37038;&#31665;&#36134;&#21495;" autocomplete="username" />
+            <button class="qq-drop-btn" type="button" title="&#36134;&#21495;&#21015;&#34920;">
+              <ChevronDown :size="24" />
+            </button>
+          </div>
+          <div class="qq-input-row">
+            <input v-model.trim="loginForm.password" type="password" placeholder="&#23494;&#30721;" autocomplete="current-password" />
+          </div>
 
-      <div v-if="authMode === 'login'" class="auth-grid">
-        <div class="field-grid">
-          <div class="field">
-            <label>邮箱</label>
-            <input v-model.trim="loginForm.email" placeholder="name@example.com" />
+          <div class="qq-options-row">
+            <label class="qq-check">
+              <input v-model="autoLogin" type="checkbox" />
+              <span></span>
+              &#33258;&#21160;&#30331;&#24405;
+            </label>
+            <label class="qq-check">
+              <input v-model="rememberPassword" type="checkbox" />
+              <span></span>
+              &#35760;&#20303;&#23494;&#30721;
+            </label>
           </div>
-          <div class="field">
-            <label>密码</label>
-            <input v-model.trim="loginForm.password" type="password" placeholder="请输入密码" />
-          </div>
-        </div>
-        <div class="toolbar">
-          <button class="btn primary" @click="handleLogin">登录</button>
-          <button class="btn ghost" @click="refreshBackend">检测后端</button>
-        </div>
-      </div>
 
-      <div v-else-if="authMode === 'register'" class="auth-grid">
-        <div class="field-grid">
-          <div class="field">
-            <label>用户名</label>
-            <input v-model.trim="registerForm.username" placeholder="你的昵称" />
-          </div>
-          <div class="field">
-            <label>邮箱</label>
-            <input v-model.trim="registerForm.email" placeholder="name@example.com" />
-          </div>
-          <div class="field">
-            <label>密码</label>
-            <input v-model.trim="registerForm.password" type="password" placeholder="不少于 6 位" />
-          </div>
-          <div class="field">
-            <label>验证码</label>
-            <input v-model.trim="registerForm.verification_code" placeholder="后端日志里拿验证码" />
-          </div>
-        </div>
-        <div class="toolbar">
-          <button class="btn ghost" @click="sendRegisterCode">发送验证码</button>
-          <button class="btn primary" @click="handleRegister">注册</button>
-        </div>
-      </div>
+          <button class="qq-login-btn" :disabled="!canSubmitLogin" @click="handleLogin">&#30331;&#24405;</button>
 
-      <div v-else class="auth-grid">
-        <div class="field-grid">
-          <div class="field">
-            <label>邮箱</label>
-            <input v-model.trim="resetForm.email" placeholder="name@example.com" />
+          <label class="qq-agreement">
+            <input v-model="agreedToTerms" type="checkbox" />
+            <span></span>
+            &#24050;&#38405;&#35835;&#24182;&#21516;&#24847; <button type="button">&#26381;&#21153;&#21327;&#35758;</button> &#21644; <button type="button">&#38544;&#31169;&#25919;&#31574;</button>
+          </label>
+
+          <div class="qq-links">
+            <button type="button" @click="notify('\u626b\u7801\u767b\u5f55\u6682\u672a\u63a5\u5165')">&#25195;&#30721;&#30331;&#24405;</button>
+            <i></i>
+            <button type="button" @click="authMode = 'register'">&#27880;&#20876;&#36134;&#21495;</button>
+            <i></i>
+            <button type="button" @click="authMode = 'reset'">&#25214;&#22238;&#23494;&#30721;</button>
           </div>
-          <div class="field">
-            <label>验证码</label>
-            <input v-model.trim="resetForm.verification_code" placeholder="验证码" />
+
+          <button class="qq-backend-link" type="button" @click="refreshBackend">&#26816;&#27979;&#21518;&#31471;</button>
+        </div>
+
+        <div v-else-if="authMode === 'register'" class="qq-form qq-secondary-form">
+          <h2>&#27880;&#20876;&#36134;&#21495;</h2>
+          <input v-model.trim="registerForm.username" placeholder="&#26165;&#31216;" autocomplete="nickname" />
+          <input v-model.trim="registerForm.email" placeholder="&#37038;&#31665;" autocomplete="email" />
+          <input v-model.trim="registerForm.password" type="password" placeholder="&#23494;&#30721;&#19981;&#23569;&#20110; 6 &#20301;" autocomplete="new-password" />
+          <div class="qq-code-row">
+            <input v-model.trim="registerForm.verification_code" placeholder="&#39564;&#35777;&#30721;" />
+            <button type="button" @click="sendRegisterCode">&#21457;&#36865;&#39564;&#35777;&#30721;</button>
           </div>
-          <div class="field">
-            <label>新密码</label>
-            <input v-model.trim="resetForm.new_password" type="password" placeholder="新密码" />
+          <button class="qq-login-btn" @click="handleRegister">&#27880;&#20876;</button>
+          <div class="qq-links compact">
+            <button type="button" @click="authMode = 'login'">&#36820;&#22238;&#30331;&#24405;</button>
+            <i></i>
+            <button type="button" @click="authMode = 'reset'">&#37325;&#32622;&#23494;&#30721;</button>
           </div>
         </div>
-        <div class="toolbar">
-          <button class="btn ghost" @click="sendResetCode">发送重置验证码</button>
-          <button class="btn primary" @click="handleReset">提交重置</button>
+
+        <div v-else class="qq-form qq-secondary-form">
+          <h2>&#37325;&#32622;&#23494;&#30721;</h2>
+          <input v-model.trim="resetForm.email" placeholder="&#37038;&#31665;" autocomplete="email" />
+          <div class="qq-code-row">
+            <input v-model.trim="resetForm.verification_code" placeholder="&#39564;&#35777;&#30721;" />
+            <button type="button" @click="sendResetCode">&#21457;&#36865;&#39564;&#35777;&#30721;</button>
+          </div>
+          <input v-model.trim="resetForm.new_password" type="password" placeholder="&#26032;&#23494;&#30721;" autocomplete="new-password" />
+          <button class="qq-login-btn" @click="handleReset">&#25552;&#20132;&#37325;&#32622;</button>
+          <div class="qq-links compact">
+            <button type="button" @click="authMode = 'login'">&#36820;&#22238;&#30331;&#24405;</button>
+            <i></i>
+            <button type="button" @click="authMode = 'register'">&#27880;&#20876;&#36134;&#21495;</button>
+          </div>
         </div>
       </div>
     </div>
   </div>
-
   <div v-else class="app-shell">
     <header class="topbar">
       <div class="brand">
@@ -312,7 +323,7 @@
       </aside>
 
       <main class="content">
-        <div v-if="selectedGroup" class="chat-card">
+        <div v-if="selectedGroup" class="chat-card" :class="selectedGroup.type === 'private' ? 'is-private-chat' : 'is-group-chat'">
           <section class="chat-main">
             <div class="chat-head">
               <div class="chat-title">
@@ -368,7 +379,15 @@
                     {{ msg.sender_id === currentUser?.id ? '你撤回了一条消息' : `${msg.sender_username}撤回了一条消息` }}
                   </div>
                   <!-- 正常消息 -->
-                  <div v-else class="message-bubble">
+                  <div v-else class="message-frame">
+                    <img class="message-avatar" :src="avatarUrl(msg.sender_id)" alt="" />
+                    <div class="message-stack">
+                      <div class="message-meta">
+                        <strong>{{ msg.sender_username }}</strong>
+                        <span>{{ formatTime(msg.created_at) }}</span>
+                        <span v-if="msg.is_deleted">&#24050;&#21024;&#38500;</span>
+                      </div>
+                      <div class="message-bubble">
                     <!-- 引用消息显示 -->
                     <div v-if="msg.cite" class="message-cite" @click="scrollToMessage(msg.cite.id)">
                       <div class="cite-line"></div>
@@ -376,12 +395,6 @@
                         <div class="cite-sender">{{ msg.cite.sender_username }}</div>
                         <div class="cite-text">{{ renderContent(msg.cite.content) }}</div>
                       </div>
-                    </div>
-                    <div class="message-meta">
-                      <img :src="avatarUrl(msg.sender_id)" alt="" width="20" height="20" style="border-radius: 50%" />
-                      <strong>{{ msg.sender_username }}</strong>
-                      <span>{{ formatTime(msg.created_at) }}</span>
-                      <span v-if="msg.is_deleted">已删除</span>
                     </div>
                     <div class="message-content">
                       <template v-if="isImageMessage(msg)">
@@ -485,6 +498,8 @@
                       <span v-if="isMessageRead(msg)" class="read">已读</span>
                       <span v-else class="unread">未读</span>
                     </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -565,8 +580,8 @@
             </div>
           </section>
 
-          <aside class="right-rail">
-            <div v-if="selectedGroup.type !== 'private'" class="hint-card announcement-card">
+          <aside v-if="selectedGroup.type !== 'private'" class="right-rail">
+            <div class="hint-card announcement-card">
               <div class="panel-title">
                 <span>群公告</span>
                 <button v-if="canEditAnnouncement" class="btn ghost small" @click="openAnnouncementEditor()">
@@ -601,7 +616,7 @@
               </div>
             </div>
 
-            <div v-if="selectedGroup.type !== 'private'" class="hint-card member-role-card">
+            <div class="hint-card member-role-card">
               <div class="panel-title">
                 <span>群成员</span>
                 <div class="member-role-actions">
@@ -618,7 +633,7 @@
               <div v-if="allMuteActive" class="mute-tip">
                 全员禁言中，截止 {{ formatTime(selectedGroup.all_muted_until) }}
               </div>
-              <div class="member-role-list">
+              <div class="member-role-list qq-member-list">
                 <div
                   v-for="member in selectedGroup.members || []"
                   :key="member.id || member.user_id"
@@ -665,7 +680,7 @@
               </div>
             </div>
 
-            <div class="hint-card scroll">
+            <div class="hint-card scroll online-card">
               <div class="panel-title">
                 <span>在线用户</span>
                 <button class="btn ghost" @click="loadOnlineUsers(selectedGroup.id)">更新</button>
@@ -872,11 +887,20 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import {
+  ChevronDown,
+  Clock3,
+  Ellipsis,
+  Folder,
+  Image,
   MessageSquareMore,
   Mic,
+  MonitorUp,
+  Phone,
+  Search,
   SendHorizontal,
   UserRound,
   Users,
+  Video,
 } from "lucide-vue-next";
 import {
   API_BASE,
@@ -933,6 +957,10 @@ import type { AuthMode, FriendRequest, Group, GroupAnnouncement, GroupMemberRole
 
 const authed = ref(false);
 const authMode = ref<AuthMode | "reset">("login");
+const autoLogin = ref(false);
+const rememberPassword = ref(true);
+const agreedToTerms = ref(true);
+const canSubmitLogin = computed(() => Boolean(loginForm.email && loginForm.password && agreedToTerms.value));
 const currentUser = ref<User | null>(getStoredUser());
 const token = ref(getStoredToken());
 const wsReady = ref(false);
