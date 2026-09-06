@@ -138,3 +138,25 @@ export interface SearchResponse {
   total: number;
   has_more: boolean;
 }
+
+export interface AIChatResponse {
+  source?: "system" | "user";
+  model: string;
+  content: string;
+  usage?: Record<string, unknown> | null;
+}
+
+export interface AIProviderConfig {
+  provider: string;
+  base_url: string;
+  api_key_masked: string;
+  key_configured: boolean;
+  selected_model?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AIModelConfig {
+  id: string;
+  name: string;
+}

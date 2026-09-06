@@ -112,6 +112,9 @@
           <button class="tab-btn" :class="{ active: activeSidebar === 'groups' }" @click="activeSidebar = 'groups'">
             <MessageSquareMore :size="16" /> 聊天
           </button>
+          <button class="tab-btn" :class="{ active: activeSidebar === 'ai' }" @click="openAIChat">
+            <Bot :size="16" /> AI
+          </button>
           <button class="tab-btn" :class="{ active: activeSidebar === 'friends' }" @click="activeSidebar = 'friends'">
             <Users :size="16" /> 好友
           </button>
@@ -276,6 +279,65 @@
             </div>
           </div>
 
+          <div v-else-if="activeSidebar === 'ai'" class="small-grid">
+            <div class="panel-card">
+              <div class="panel-title">
+                <span>AI 对话</span>
+              </div>
+              <div class="small-grid">
+                <button class="btn primary" @click="focusAIInput">打开对话</button>
+                <button class="btn ghost" @click="clearAIChat" :disabled="aiMessages.length === 0 || aiLoading">清空对话</button>
+              </div>
+            </div>
+
+            <div class="panel-card">
+              <div class="panel-title">
+                <span>接口配置</span>
+                <button class="btn ghost" @click="loadAIProviderState" :disabled="aiModelsLoading">刷新</button>
+              </div>
+              <div class="field">
+                <label>当前模型</label>
+                <select v-model="selectedAIModelName" @change="persistSelectedAIModel">
+                  <option value="">请选择模型</option>
+                  <option v-for="model in aiModels" :key="model.id" :value="model.id">
+                    {{ model.name }}
+                  </option>
+                </select>
+              </div>
+              <div class="small-grid" style="margin-top: 12px">
+                <div class="field">
+                  <label>接口类型</label>
+                  <select v-model="aiProviderForm.provider">
+                    <option value="openai_compatible">OpenAI-compatible</option>
+                    <option value="anthropic" disabled>Anthropic（后续接入）</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Base URL</label>
+                  <input v-model.trim="aiProviderForm.base_url" placeholder="https://.../v1" />
+                </div>
+                <div class="field">
+                  <label>API Key</label>
+                  <input v-model.trim="aiProviderForm.api_key" type="password" :placeholder="aiProviderConfig?.key_configured ? aiProviderConfig.api_key_masked : '请输入 API Key'" />
+                </div>
+                <div class="toolbar">
+                  <button class="btn primary" @click="saveProviderAndLoadModels" :disabled="aiModelsLoading">连接并加载模型</button>
+                  <button class="btn ghost" @click="loadAIModels" :disabled="aiModelsLoading || !aiProviderConfig">重新加载模型</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="list">
+              <div v-for="model in aiModels" :key="model.id" class="list-item">
+                <div class="list-item-head">
+                  <strong>{{ model.name }}</strong>
+                  <span class="muted">{{ selectedAIModelName === model.id ? '当前' : '可用' }}</span>
+                </div>
+                <button class="btn ghost" style="margin-top: 8px" @click="selectAIModel(model)">切换到这个模型</button>
+              </div>
+            </div>
+          </div>
+
           <div v-else class="small-grid">
             <div class="panel-card">
               <div class="panel-title">
@@ -323,7 +385,86 @@
       </aside>
 
       <main class="content">
-        <div v-if="selectedGroup" class="chat-card" :class="selectedGroup.type === 'private' ? 'is-private-chat' : 'is-group-chat'">
+        <div v-if="activeSidebar === 'ai'" class="ai-chat-card">
+          <section class="ai-chat-main">
+            <div class="chat-head ai-chat-head">
+              <div class="chat-title">
+                <strong>AI 对话</strong>
+                <span class="muted">{{ aiMessages.length }} 条消息</span>
+              </div>
+              <div class="toolbar">
+                <select v-model="selectedAIModelName" class="ai-model-select" @change="persistSelectedAIModel">
+                  <option value="">请选择模型</option>
+                  <option v-for="model in aiModels" :key="model.id" :value="model.id">
+                    {{ model.name }}
+                  </option>
+                </select>
+                <button class="btn ghost" @click="clearAIChat" :disabled="aiMessages.length === 0 || aiLoading">清空</button>
+              </div>
+            </div>
+
+            <div ref="aiScrollRef" class="chat-body ai-chat-body">
+              <div v-if="aiMessages.length === 0" class="ai-empty">
+                <Bot :size="42" />
+                <strong>开始新的 AI 对话</strong>
+              </div>
+              <div v-else class="message-list ai-message-list">
+                <div
+                  v-for="message in aiMessages"
+                  :key="message.id"
+                  class="message-row ai-message-row"
+                  :class="{ self: message.role === 'user' }"
+                >
+                  <div class="message-frame">
+                    <div class="message-avatar ai-avatar">
+                      {{ message.role === 'user' ? '我' : 'AI' }}
+                    </div>
+                    <div class="message-stack">
+                      <div class="message-meta">
+                        <strong>{{ message.role === 'user' ? currentUser?.username || '我' : message.model || 'AI 助手' }}</strong>
+                        <span>{{ formatTime(message.created_at) }}</span>
+                      </div>
+                      <div class="message-bubble">
+                        <div class="message-content">{{ message.content }}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div v-if="aiLoading" class="message-row ai-message-row">
+                  <div class="message-frame">
+                    <div class="message-avatar ai-avatar">AI</div>
+                    <div class="message-stack">
+                      <div class="message-meta"><strong>AI 助手</strong></div>
+                      <div class="message-bubble">
+                        <div class="message-content">正在生成...</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="composer ai-composer">
+              <div class="composer-row">
+                <textarea
+                  ref="aiInputRef"
+                  v-model="aiDraft"
+                  placeholder="问 AI 一个问题..."
+                  :disabled="aiLoading"
+                  @keydown.enter.exact.prevent="sendAIMessage"
+                  @keydown.enter.shift.stop
+                />
+                <div class="composer-buttons">
+                  <button class="btn primary" :disabled="aiLoading || !aiDraft.trim()" @click="sendAIMessage">
+                    <SendHorizontal :size="16" /> {{ aiLoading ? '生成中' : '发送' }}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div v-else-if="selectedGroup" class="chat-card" :class="selectedGroup.type === 'private' ? 'is-private-chat' : 'is-group-chat'">
           <section class="chat-main">
             <div class="chat-head">
               <div class="chat-title">
@@ -887,6 +1028,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import {
+  Bot,
   ChevronDown,
   Clock3,
   Ellipsis,
@@ -906,6 +1048,7 @@ import {
   API_BASE,
   WS_BASE,
   avatarUrl,
+  chatWithAI,
   createGroupAnnouncement,
   createGroup,
   deleteGroupAnnouncement,
@@ -914,6 +1057,8 @@ import {
   downloadFileUrl,
   friendRequestCount,
   getGroupAnnouncements,
+  getAIProviderConfig,
+  getAIProviderModels,
   getGroupMembers,
   getFriendRequestList,
   getFriends,
@@ -935,6 +1080,8 @@ import {
   searchUsers,
   sendEmailCode,
   sendFriendRequest,
+  saveAIProviderConfig,
+  saveSelectedAIModel,
   setAuthToken,
   setGroupAdmin,
   setStoredUser,
@@ -953,7 +1100,15 @@ import {
   clearGroupMessages,  // 新增：清空会话消息接口
   searchMessages,  // 新增：消息搜索接口
 } from "./services/api";
-import type { AuthMode, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, LoginUser, Message, MutedMember, User, SearchResult, SearchResponse } from "./types";
+import type { AuthMode, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, LoginUser, Message, MutedMember, User, SearchResult, SearchResponse, AIModelConfig, AIProviderConfig } from "./types";
+
+type AIMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+  model?: string;
+};
 
 const authed = ref(false);
 const authMode = ref<AuthMode | "reset">("login");
@@ -969,7 +1124,7 @@ const uploadingFile = ref(false); // 新增：文件上传中状态
 const hasMoreHistory = ref(false); // 新增：是否还有更多历史消息
 const nextCursor = ref<string | null>(null); // 新增：下一页游标
 const ws = ref<WebSocket | null>(null);
-const activeSidebar = ref<"groups" | "friends" | "profile">("groups");
+const activeSidebar = ref<"groups" | "ai" | "friends" | "profile">("groups");
 const groups = ref<Group[]>([]);
 const friends = ref<User[]>([]);
 const friendRequests = ref<FriendRequest[]>([]);
@@ -1027,6 +1182,20 @@ const TYPING_STOP_DELAY_MS = 5000; // 5秒无输入发送停止
 const showCreateGroup = ref(false);
 const toast = ref("");
 const messageScrollRef = ref<HTMLElement | null>(null);
+const aiScrollRef = ref<HTMLElement | null>(null);
+const aiInputRef = ref<HTMLTextAreaElement | null>(null);
+const aiDraft = ref("");
+const aiLoading = ref(false);
+const aiMessages = ref<AIMessage[]>([]);
+const aiModels = ref<AIModelConfig[]>([]);
+const aiModelsLoading = ref(false);
+const aiProviderConfig = ref<AIProviderConfig | null>(null);
+const selectedAIModelName = ref("");
+const aiProviderForm = reactive({
+  provider: "openai_compatible",
+  base_url: "",
+  api_key: "",
+});
 
 // 消息右键菜单相关
 const contextMenu = ref<{
@@ -1131,6 +1300,147 @@ function notify(message: string) {
   (notify as unknown as { t?: number }).t = window.setTimeout(() => {
     toast.value = "";
   }, 2600);
+}
+
+function scrollAIToBottom() {
+  nextTick(() => {
+    const el = aiScrollRef.value;
+    if (el) el.scrollTop = el.scrollHeight;
+  });
+}
+
+function openAIChat() {
+  activeSidebar.value = "ai";
+  selectedGroupId.value = "";
+  selectedGroup.value = null;
+  loadAIProviderState();
+  focusAIInput();
+}
+
+function focusAIInput() {
+  nextTick(() => aiInputRef.value?.focus());
+}
+
+function clearAIChat() {
+  aiMessages.value = [];
+  aiDraft.value = "";
+  focusAIInput();
+}
+
+async function loadAIProviderState() {
+  if (aiModelsLoading.value) return;
+  aiModelsLoading.value = true;
+  let shouldLoadModels = false;
+  try {
+    const config = await getAIProviderConfig();
+    aiProviderConfig.value = config;
+    if (config) {
+      aiProviderForm.provider = config.provider;
+      aiProviderForm.base_url = config.base_url;
+      aiProviderForm.api_key = "";
+      selectedAIModelName.value = config.selected_model || "";
+      shouldLoadModels = true;
+    }
+  } catch (error: any) {
+    notify(error?.response?.data?.message || "AI接口配置读取失败");
+  } finally {
+    aiModelsLoading.value = false;
+  }
+
+  if (shouldLoadModels) {
+    await loadAIModels();
+  }
+}
+
+async function loadAIModels() {
+  if (aiModelsLoading.value) return;
+  aiModelsLoading.value = true;
+  try {
+    aiModels.value = await getAIProviderModels();
+    if (selectedAIModelName.value && !aiModels.value.some((model) => model.id === selectedAIModelName.value)) {
+      selectedAIModelName.value = "";
+    }
+  } catch (error: any) {
+    notify(error?.response?.data?.message || "模型列表读取失败");
+  } finally {
+    aiModelsLoading.value = false;
+  }
+}
+
+async function saveProviderAndLoadModels() {
+  if (!aiProviderForm.base_url || !aiProviderForm.api_key) {
+    notify("请填写 Base URL 和 API Key");
+    return;
+  }
+  if (aiProviderForm.provider !== "openai_compatible") {
+    notify("当前只支持 OpenAI-compatible 接口");
+    return;
+  }
+
+  try {
+    aiProviderConfig.value = await saveAIProviderConfig({
+      ...aiProviderForm,
+      selected_model: selectedAIModelName.value || undefined,
+    });
+    aiProviderForm.api_key = "";
+    await loadAIModels();
+    if (!selectedAIModelName.value && aiModels.value.length > 0) {
+      selectedAIModelName.value = aiModels.value[0].id;
+    }
+    notify("接口已连接，模型列表已加载");
+  } catch (error: any) {
+    notify(error?.response?.data?.message || "接口连接失败");
+  }
+}
+
+async function persistSelectedAIModel() {
+  if (!selectedAIModelName.value) return;
+  try {
+    aiProviderConfig.value = await saveSelectedAIModel(selectedAIModelName.value);
+  } catch (error: any) {
+    notify(error?.response?.data?.message || error?.message || "当前模型保存失败");
+  }
+}
+
+async function selectAIModel(model: AIModelConfig) {
+  selectedAIModelName.value = model.id;
+  await persistSelectedAIModel();
+  notify(`已切换模型：${model.name}`);
+}
+
+async function sendAIMessage() {
+  const content = aiDraft.value.trim();
+  if (!content || aiLoading.value) return;
+
+  aiMessages.value.push({
+    id: `user-${Date.now()}`,
+    role: "user",
+    content,
+    created_at: new Date().toISOString(),
+  });
+  aiDraft.value = "";
+  aiLoading.value = true;
+  scrollAIToBottom();
+
+  try {
+    const reply = await chatWithAI({
+      message: content,
+      model_name: selectedAIModelName.value || undefined,
+    });
+    aiMessages.value.push({
+      id: `assistant-${Date.now()}`,
+      role: "assistant",
+      content: reply.content,
+      model: reply.model,
+      created_at: new Date().toISOString(),
+    });
+  } catch (error: any) {
+    notify(error?.response?.data?.message || "AI 生成失败");
+  } finally {
+    aiLoading.value = false;
+    scrollAIToBottom();
+    focusAIInput();
+  }
 }
 
 // 监听输入框变化，发送输入中状态

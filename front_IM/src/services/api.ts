@@ -11,6 +11,9 @@ import type {
   Paginated,
   SearchResponse,
   User,
+  AIChatResponse,
+  AIModelConfig,
+  AIProviderConfig,
 } from "../types";
 
 export const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
@@ -326,4 +329,34 @@ export function searchMessages(params: { group_id: string; keyword: string; page
   return unwrap<SearchResponse>(
     http.get("/api/chat/search", { params })
   );
+}
+
+export function getAIProviderConfig() {
+  return unwrap<AIProviderConfig | null>(http.get("/api/ai/provider-config"));
+}
+
+export function saveAIProviderConfig(payload: {
+  provider: string;
+  base_url: string;
+  api_key: string;
+  selected_model?: string;
+}) {
+  return unwrap<AIProviderConfig>(http.post("/api/ai/provider-config", payload));
+}
+
+export function getAIProviderModels() {
+  return unwrap<AIModelConfig[]>(http.get("/api/ai/provider-config/models"));
+}
+
+export function saveSelectedAIModel(model_name: string) {
+  return unwrap<AIProviderConfig>(http.post("/api/ai/provider-config/selected-model", { model_name }));
+}
+
+export function chatWithAI(payload: { message: string; model_name?: string; temperature?: number; max_tokens?: number }) {
+  return http.post<ApiResponse<AIChatResponse>>("/api/ai/chat", payload).then((res) => {
+    if (res.data.code !== 200 || !res.data.data?.content) {
+      throw new Error(res.data.message || "AI 生成失败");
+    }
+    return res.data.data;
+  });
 }
