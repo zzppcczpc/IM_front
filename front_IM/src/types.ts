@@ -102,6 +102,15 @@ export interface Message {
   read_list: string[];
   is_revoke: boolean;
   is_deleted: boolean;
+  is_AI?: boolean;
+  is_streaming?: boolean;
+  stop?: boolean;
+  model_id?: string | null;
+  model_name?: string | null;
+  ai_parent_message_id?: string | null;
+  recommend_questions?: string[];
+  citations?: Record<string, unknown>[];
+  error_message?: string | null;
   created_at: string;
   duration?: number | null;
   revoke_at?: string | null;
