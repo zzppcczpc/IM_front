@@ -292,48 +292,16 @@
 
             <div class="panel-card">
               <div class="panel-title">
-                <span>接口配置</span>
-                <button class="btn ghost" @click="loadAIProviderState" :disabled="aiModelsLoading">刷新</button>
+                <span>平台 AI</span>
+                <button class="btn ghost" @click="loadAIProviderState" :disabled="aiModelsLoading">刷新状态</button>
               </div>
-              <div class="field">
-                <label>当前模型</label>
-                <select v-model="selectedAIModelName" @change="persistSelectedAIModel">
-                  <option value="">请选择模型</option>
-                  <option v-for="model in aiModels" :key="model.id" :value="model.id">
-                    {{ model.name }}
-                  </option>
-                </select>
+              <div class="small-grid">
+                <div>服务提供方：{{ aiProviderConfig?.provider || '未配置' }}</div>
+                <div>当前模型：{{ selectedAIModelName || '未配置' }}</div>
+                <div>服务状态：{{ aiProviderConfig?.key_configured ? '已配置，可直接使用' : '未配置，请联系管理员' }}</div>
               </div>
-              <div class="small-grid" style="margin-top: 12px">
-                <div class="field">
-                  <label>接口类型</label>
-                  <select v-model="aiProviderForm.provider">
-                    <option value="openai_compatible">OpenAI-compatible</option>
-                    <option value="anthropic" disabled>Anthropic（后续接入）</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label>Base URL</label>
-                  <input v-model.trim="aiProviderForm.base_url" placeholder="https://.../v1" />
-                </div>
-                <div class="field">
-                  <label>API Key</label>
-                  <input v-model.trim="aiProviderForm.api_key" type="password" :placeholder="aiProviderConfig?.key_configured ? aiProviderConfig.api_key_masked : '请输入 API Key'" />
-                </div>
-                <div class="toolbar">
-                  <button class="btn primary" @click="saveProviderAndLoadModels" :disabled="aiModelsLoading">连接并加载模型</button>
-                  <button class="btn ghost" @click="loadAIModels" :disabled="aiModelsLoading || !aiProviderConfig">重新加载模型</button>
-                </div>
-              </div>
-            </div>
-
-            <div class="list">
-              <div v-for="model in aiModels" :key="model.id" class="list-item">
-                <div class="list-item-head">
-                  <strong>{{ model.name }}</strong>
-                  <span class="muted">{{ selectedAIModelName === model.id ? '当前' : '可用' }}</span>
-                </div>
-                <button class="btn ghost" style="margin-top: 8px" @click="selectAIModel(model)">切换到这个模型</button>
+              <div class="muted" style="margin-top: 12px">
+                AI 接口和模型由平台统一配置，用户无需填写 API Key 或 Base URL。
               </div>
             </div>
           </div>
@@ -393,12 +361,7 @@
                 <span class="muted">{{ aiMessages.length }} 条消息</span>
               </div>
               <div class="toolbar">
-                <select v-model="selectedAIModelName" class="ai-model-select" @change="persistSelectedAIModel">
-                  <option value="">请选择模型</option>
-                  <option v-for="model in aiModels" :key="model.id" :value="model.id">
-                    {{ model.name }}
-                  </option>
-                </select>
+                <span class="muted">平台模型：{{ selectedAIModelName || '未配置' }}</span>
                 <button class="btn ghost" @click="clearAIChat" :disabled="aiMessages.length === 0 || aiLoading">清空</button>
               </div>
             </div>
@@ -490,7 +453,7 @@
               </div>
             </div>
 
-            <div ref="messageScrollRef" class="chat-body">
+            <div ref="messageScrollRef" class="chat-body" @scroll.passive="handleMessageScroll">
               <div class="message-list">
                 <div
                   v-for="msg in currentMessages"
@@ -1075,7 +1038,6 @@ import {
   friendRequestCount,
   getGroupAnnouncements,
   getAIProviderConfig,
-  getAIProviderModels,
   getGroupMembers,
   getFriendRequestList,
   getFriends,
@@ -1086,7 +1048,6 @@ import {
   handleFriendRequest,
   leaveGroup,
   login,
-  markAllRead,
   muteAllGroupMembers,
   muteGroupMember,
   queryUsers,
@@ -1097,8 +1058,6 @@ import {
   searchUsers,
   sendEmailCode,
   sendFriendRequest,
-  saveAIProviderConfig,
-  saveSelectedAIModel,
   setAuthToken,
   setGroupAdmin,
   setStoredUser,
@@ -1117,7 +1076,7 @@ import {
   clearGroupMessages,  // 新增：清空会话消息接口
   searchMessages,  // 新增：消息搜索接口
 } from "./services/api";
-import type { AuthMode, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, LoginUser, Message, MutedMember, User, SearchResult, SearchResponse, AIModelConfig, AIProviderConfig } from "./types";
+import type { AuthMode, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, LoginUser, Message, MutedMember, User, SearchResult, SearchResponse, AIProviderConfig } from "./types";
 
 type AIMessage = {
   id: string;
@@ -1140,6 +1099,7 @@ const loadingHistory = ref(false); // 新增：加载历史消息的状态
 const uploadingFile = ref(false); // 新增：文件上传中状态
 const hasMoreHistory = ref(false); // 新增：是否还有更多历史消息
 const nextCursor = ref<string | null>(null); // 新增：下一页游标
+const pendingHistoryScroll = ref<{ top: number; height: number } | null>(null);
 const ws = ref<WebSocket | null>(null);
 const activeSidebar = ref<"groups" | "ai" | "friends" | "profile">("groups");
 const groups = ref<Group[]>([]);
@@ -1204,16 +1164,10 @@ const aiInputRef = ref<HTMLTextAreaElement | null>(null);
 const aiDraft = ref("");
 const aiLoading = ref(false);
 const aiMessages = ref<AIMessage[]>([]);
-const aiModels = ref<AIModelConfig[]>([]);
 const aiModelsLoading = ref(false);
 const aiProviderConfig = ref<AIProviderConfig | null>(null);
 const selectedAIModelName = ref("");
 const aiTriggerEnabled = ref(false);
-const aiProviderForm = reactive({
-  provider: "openai_compatible",
-  base_url: "",
-  api_key: "",
-});
 
 // 消息右键菜单相关
 const contextMenu = ref<{
@@ -1348,82 +1302,15 @@ function clearAIChat() {
 async function loadAIProviderState() {
   if (aiModelsLoading.value) return;
   aiModelsLoading.value = true;
-  let shouldLoadModels = false;
   try {
     const config = await getAIProviderConfig();
     aiProviderConfig.value = config;
-    if (config) {
-      aiProviderForm.provider = config.provider;
-      aiProviderForm.base_url = config.base_url;
-      aiProviderForm.api_key = "";
-      selectedAIModelName.value = config.selected_model || "";
-      shouldLoadModels = true;
-    }
+    selectedAIModelName.value = config?.selected_model || "";
   } catch (error: any) {
-    notify(error?.response?.data?.message || "AI接口配置读取失败");
+    notify(error?.response?.data?.message || "平台 AI 状态读取失败");
   } finally {
     aiModelsLoading.value = false;
   }
-
-  if (shouldLoadModels) {
-    await loadAIModels();
-  }
-}
-
-async function loadAIModels() {
-  if (aiModelsLoading.value) return;
-  aiModelsLoading.value = true;
-  try {
-    aiModels.value = await getAIProviderModels();
-    if (selectedAIModelName.value && !aiModels.value.some((model) => model.id === selectedAIModelName.value)) {
-      selectedAIModelName.value = "";
-    }
-  } catch (error: any) {
-    notify(error?.response?.data?.message || "模型列表读取失败");
-  } finally {
-    aiModelsLoading.value = false;
-  }
-}
-
-async function saveProviderAndLoadModels() {
-  if (!aiProviderForm.base_url || !aiProviderForm.api_key) {
-    notify("请填写 Base URL 和 API Key");
-    return;
-  }
-  if (aiProviderForm.provider !== "openai_compatible") {
-    notify("当前只支持 OpenAI-compatible 接口");
-    return;
-  }
-
-  try {
-    aiProviderConfig.value = await saveAIProviderConfig({
-      ...aiProviderForm,
-      selected_model: selectedAIModelName.value || undefined,
-    });
-    aiProviderForm.api_key = "";
-    await loadAIModels();
-    if (!selectedAIModelName.value && aiModels.value.length > 0) {
-      selectedAIModelName.value = aiModels.value[0].id;
-    }
-    notify("接口已连接，模型列表已加载");
-  } catch (error: any) {
-    notify(error?.response?.data?.message || "接口连接失败");
-  }
-}
-
-async function persistSelectedAIModel() {
-  if (!selectedAIModelName.value) return;
-  try {
-    aiProviderConfig.value = await saveSelectedAIModel(selectedAIModelName.value);
-  } catch (error: any) {
-    notify(error?.response?.data?.message || error?.message || "当前模型保存失败");
-  }
-}
-
-async function selectAIModel(model: AIModelConfig) {
-  selectedAIModelName.value = model.id;
-  await persistSelectedAIModel();
-  notify(`已切换模型：${model.name}`);
 }
 
 async function sendAIMessage() {
@@ -1443,7 +1330,6 @@ async function sendAIMessage() {
   try {
     const reply = await chatWithAI({
       message: content,
-      model_name: selectedAIModelName.value || undefined,
     });
     aiMessages.value.push({
       id: `assistant-${Date.now()}`,
@@ -1468,12 +1354,12 @@ async function toggleAITrigger() {
     return;
   }
 
-  if (!aiProviderConfig.value || !selectedAIModelName.value) {
+  if (!aiProviderConfig.value) {
     await loadAIProviderState();
   }
 
-  if (!selectedAIModelName.value) {
-    notify("请先打开 AI 对话配置并选择模型");
+  if (!aiProviderConfig.value?.key_configured || !selectedAIModelName.value) {
+    notify("平台 AI 尚未配置，请联系管理员");
     return;
   }
 
@@ -2026,22 +1912,23 @@ async function openGroup(groupId: string) {
   selectedGroupId.value = groupId;
   selectedGroup.value = groups.value.find((g) => g.id === groupId) || (await getGroupDetail(groupId));
   aiTriggerEnabled.value = false;
+  hasMoreHistory.value = false;
+  nextCursor.value = null;
+  pendingHistoryScroll.value = null;
   announcements.value = [];
   try {
     const payload = await getGroupMessages({ id: groupId, page: 1, page_size: 50 });
     // 修改：打开群聊时走统一排序入口；删除原来的直接赋值，避免接口顺序影响页面顺序。
     setCurrentMessages(payload.items || []);
+    hasMoreHistory.value = payload.total > (payload.items || []).length;
+    nextCursor.value = payload.items?.[0]?.id || null;
     onlineUsers.value = [];
   } catch {
     currentMessages.value = [];
   }
   await loadAnnouncements(groupId);
   await loadGroupMembers(groupId);
-  try {
-    await markAllRead(groupId);
-  } catch {
-    // ignore
-  }
+  await markLoadedMessagesRead(groupId, currentMessages.value);
   await loadGroups();
   await loadOnlineUsers(groupId);
 
@@ -2056,7 +1943,15 @@ async function loadGroupMessages(groupId: string) {
     notify("WebSocket 未连接，无法加载历史消息");
     return;
   }
+  if (currentMessages.value.length && !hasMoreHistory.value) {
+    notify("没有更早的历史消息");
+    return;
+  }
   loadingHistory.value = true;
+  pendingHistoryScroll.value = {
+    top: messageScrollRef.value?.scrollTop || 0,
+    height: messageScrollRef.value?.scrollHeight || 0,
+  };
 
   // 构建请求参数
   const payload: { type: string; group_id: string; limit: number; before_id?: string } = {
@@ -2071,6 +1966,40 @@ async function loadGroupMessages(groupId: string) {
   }
 
   ws.value.send(JSON.stringify(payload));
+}
+
+function handleMessageScroll() {
+  const element = messageScrollRef.value;
+  if (!element || loadingHistory.value || !hasMoreHistory.value || !selectedGroupId.value) {
+    return;
+  }
+
+  if (element.scrollTop <= 80) {
+    loadGroupMessages(selectedGroupId.value);
+  }
+}
+
+async function markLoadedMessagesRead(groupId: string, messages: Message[]) {
+  const userId = currentUser.value?.id;
+  if (!userId || !messages.length) return;
+
+  const unreadIds = messages
+    .filter((message) => !message.read_list.includes(userId))
+    .map((message) => message.id);
+  if (!unreadIds.length) return;
+
+  try {
+    await markRead({ group_id: groupId, message_ids: unreadIds });
+  } catch {
+    // 消息已经被其他设备标记已读时，不影响当前页面继续浏览。
+  }
+
+  currentMessages.value = currentMessages.value.map((message) =>
+    unreadIds.includes(message.id)
+      ? { ...message, read_list: [...new Set([...message.read_list, userId])] }
+      : message,
+  );
+  await loadGroups();
 }
 
 async function loadOnlineUsers(groupId: string) {
@@ -2099,6 +2028,10 @@ async function readCurrentGroup() {
 function applyIncomingMessage(message: Message) {
   const normalized = normalizeMessage(message);
   const list = groups.value.find((item) => item.id === normalized.group_id);
+  const scrollElement = messageScrollRef.value;
+  const wasNearBottom =
+    !scrollElement ||
+    scrollElement.scrollHeight - scrollElement.scrollTop - scrollElement.clientHeight < 120;
   if (normalized.group_id === selectedGroupId.value) {
     // 修改：实时消息走统一去重排序；删除原来的直接追加，避免晚到的消息插错位置。
     mergeCurrentMessages([normalized]);
@@ -2122,7 +2055,9 @@ function applyIncomingMessage(message: Message) {
   if (list) {
     list.last_message = normalized as unknown as Record<string, unknown>;
   }
-  scrollToBottom();
+  if (normalized.group_id === selectedGroupId.value && wasNearBottom) {
+    scrollToBottom();
+  }
 }
 
 function connectWs() {
@@ -2167,17 +2102,23 @@ function connectWs() {
         hasMoreHistory.value = data.has_more === true;
         nextCursor.value = data.next_cursor as string | null;
 
-        // 判断是首次加载还是加载更多
-        // 如果 before_id 存在，说明是加载更多（往前翻页），需要插入到现有消息前面
+        // before_id 表示向上翻页：把更早消息插入顶部，并恢复原滚动位置。
         if (data.before_id) {
-          // 加载更多：将更早的消息插入到前面
           currentMessages.value = mergeMessagesByTime(items, currentMessages.value);
+          await nextTick();
+          const element = messageScrollRef.value;
+          const previousScroll = pendingHistoryScroll.value;
+          if (element && previousScroll) {
+            element.scrollTop =
+              previousScroll.top + (element.scrollHeight - previousScroll.height);
+          }
         } else {
-          // 首次加载：直接替换
           setCurrentMessages(items);
+          scrollToBottom();
         }
 
-        scrollToBottom();
+        await markLoadedMessagesRead(data.group_id, items);
+        pendingHistoryScroll.value = null;
         loadingHistory.value = false;
         notify(`已加载 ${items.length} 条消息${hasMoreHistory.value ? "，还有更多" : ""}`);
       }
@@ -2185,9 +2126,11 @@ function connectWs() {
     }
     if (type === "group_history" && typeof data.group_id === "string") {
       if (selectedGroupId.value === data.group_id) {
-        // 修改：只合并当前打开群聊的历史消息；删除原来收到任意群历史就覆盖当前聊天区的逻辑。
-        mergeCurrentMessages((data.content as Message[]) || []);
-        scrollToBottom();
+        // 打开群聊会通过 HTTP 加载完整的首屏历史，这里的连接初始化消息只作为空列表时的兜底。
+        if (!currentMessages.value.length) {
+          mergeCurrentMessages((data.content as Message[]) || []);
+          scrollToBottom();
+        }
       }
       return;
     }
@@ -2195,16 +2138,14 @@ function connectWs() {
       const offlineGroups = data.content as Array<{ group_id: string; messages: Message[] }>;
       for (const group of offlineGroups) {
         const normalizedMessages = (group.messages || []).map(normalizeMessage);
-        if (group.group_id === selectedGroupId.value) {
-          // 修改：离线消息走统一去重排序；删除原来的手写 filter + sort，避免和历史消息重复/乱序。
+        if (group.group_id === selectedGroupId.value && !currentMessages.value.length) {
+          // 首屏 HTTP 请求失败时才使用离线消息兜底，避免和首屏历史重复并把滚动位置拉到底部。
           mergeCurrentMessages(normalizedMessages);
           scrollToBottom();
         }
-        // 更新群列表的未读数和最新消息
+        // 群列表连接时已经带有服务端计算的未读数，这里只更新最后一条消息，避免重复累加未读数。
         const g = groups.value.find((item) => item.id === group.group_id);
         if (g) {
-          // 修改：未读数按本次离线消息增加，最后一条消息按 created_at 取最新。
-          g.unread_count = (g.unread_count || 0) + normalizedMessages.length;
           updateGroupLastMessage(group.group_id, normalizedMessages);
         }
       }
@@ -2611,7 +2552,6 @@ function sendTextMessage() {
   };
   if (aiTriggerEnabled.value) {
     payload.trigger_ai = true;
-    payload.ai_model_name = selectedAIModelName.value;
   }
   // 如果有引用消息，添加 cite 字段
   if (citeMessage.value) {
@@ -2636,7 +2576,6 @@ async function onGroupFileChange(event: Event) {
       await uploadGroupFile(selectedGroupId.value, file);
     }
     notify("文件已上传");
-    await loadGroupMessages(selectedGroupId.value);
   } catch (e: any) {
     notify(e?.message || "文件上传失败，请检查文件大小和类型");
   }
