@@ -499,6 +499,7 @@
                   class="message-row"
                   :class="{
                     self: msg.sender_id === currentUser?.id && !msg.is_revoke,
+                    'ai-message-row': msg.is_AI,
                     highlighted: highlightedMessageId === msg.id,
                     'multi-select-mode': isMultiSelectMode,
                     'selected': isMultiSelectMode && isMessageSelected(msg.id)
@@ -521,10 +522,14 @@
                   </div>
                   <!-- 正常消息 -->
                   <div v-else class="message-frame">
-                    <img class="message-avatar" :src="avatarUrl(msg.sender_id)" alt="" />
+                    <div v-if="msg.is_AI" class="message-avatar ai-message-avatar" aria-label="AI消息">
+                      <Bot :size="20" />
+                    </div>
+                    <img v-else class="message-avatar" :src="avatarUrl(msg.sender_id)" alt="" />
                     <div class="message-stack">
                       <div class="message-meta">
-                        <strong>{{ msg.sender_username }}</strong>
+                        <strong>{{ msg.is_AI ? (msg.model_name || 'AI助手') : msg.sender_username }}</strong>
+                        <span v-if="msg.is_AI" class="ai-message-badge">AI</span>
                         <span>{{ formatTime(msg.created_at) }}</span>
                         <span v-if="msg.is_deleted">&#24050;&#21024;&#38500;</span>
                       </div>
@@ -654,6 +659,18 @@
                     <input type="file" hidden @change="onGroupFileChange" />
                   </label>
                   <button class="btn ghost" @click="loadGroupMessages(selectedGroup.id)">刷新历史</button>
+                  <button
+                    v-if="selectedGroup.type !== 'private'"
+                    class="btn ghost"
+                    :class="{ active: aiTriggerEnabled }"
+                    @click="toggleAITrigger"
+                  >
+                    <Bot :size="16" />
+                    {{ aiTriggerEnabled ? '关闭AI回复' : '让AI回复' }}
+                  </button>
+                  <span v-if="aiTriggerEnabled" class="muted ai-trigger-model">
+                    模型：{{ selectedAIModelName || '未选择' }}
+                  </span>
                   <!-- 多选模式切换 -->
                   <button
                     class="btn ghost"
@@ -1191,6 +1208,7 @@ const aiModels = ref<AIModelConfig[]>([]);
 const aiModelsLoading = ref(false);
 const aiProviderConfig = ref<AIProviderConfig | null>(null);
 const selectedAIModelName = ref("");
+const aiTriggerEnabled = ref(false);
 const aiProviderForm = reactive({
   provider: "openai_compatible",
   base_url: "",
@@ -1441,6 +1459,26 @@ async function sendAIMessage() {
     scrollAIToBottom();
     focusAIInput();
   }
+}
+
+async function toggleAITrigger() {
+  if (aiTriggerEnabled.value) {
+    aiTriggerEnabled.value = false;
+    notify("已关闭 AI 回复");
+    return;
+  }
+
+  if (!aiProviderConfig.value || !selectedAIModelName.value) {
+    await loadAIProviderState();
+  }
+
+  if (!selectedAIModelName.value) {
+    notify("请先打开 AI 对话配置并选择模型");
+    return;
+  }
+
+  aiTriggerEnabled.value = true;
+  notify(`已开启 AI 回复：${selectedAIModelName.value}`);
 }
 
 // 监听输入框变化，发送输入中状态
@@ -1987,6 +2025,7 @@ async function openGroup(groupId: string) {
 
   selectedGroupId.value = groupId;
   selectedGroup.value = groups.value.find((g) => g.id === groupId) || (await getGroupDetail(groupId));
+  aiTriggerEnabled.value = false;
   announcements.value = [];
   try {
     const payload = await getGroupMessages({ id: groupId, page: 1, page_size: 50 });
@@ -2177,6 +2216,17 @@ function connectWs() {
       return;
     }
     if (type === "message_sent") {
+      return;
+    }
+    if (type === "ai_reply_success" && data.content && typeof data.content === "object") {
+      notify("AI已回复");
+      return;
+    }
+    if (type === "ai_reply_error" && data.content && typeof data.content === "object") {
+      const errorMessage = String(
+        (data.content as { error_message?: string }).error_message || "AI回复失败",
+      );
+      notify(errorMessage);
       return;
     }
     // 处理输入中状态
@@ -2549,12 +2599,20 @@ function scrollToMessage(messageId: string) {
 
 function sendTextMessage() {
   if (!selectedGroupId.value || !draftMessage.value.trim()) return;
+  if (aiTriggerEnabled.value && !selectedAIModelName.value) {
+    notify("请先选择 AI 模型");
+    return;
+  }
   const payload: Record<string, unknown> = {
     type: "text",
     group_id: selectedGroupId.value,
     content: draftMessage.value.trim(),
     at_list: [],
   };
+  if (aiTriggerEnabled.value) {
+    payload.trigger_ai = true;
+    payload.ai_model_name = selectedAIModelName.value;
+  }
   // 如果有引用消息，添加 cite 字段
   if (citeMessage.value) {
     payload.cite = citeMessage.value.id;

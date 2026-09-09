@@ -1773,6 +1773,24 @@ a {
   background: #d8d8d8;
 }
 
+.ai-message-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0aa2ff;
+  color: #fff;
+}
+
+.ai-message-badge {
+  color: #0aa2ff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ai-trigger-model {
+  align-self: center;
+}
+
 .message-stack {
   display: flex;
   flex-direction: column;
