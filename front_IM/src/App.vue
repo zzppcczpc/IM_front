@@ -598,10 +598,15 @@
                           {{ fileNameOf(msg) }}
                         </a>
                       </template>
+                      <template v-else-if="msg.is_AI && msg.is_streaming && !renderContent(msg.content)">
+                        正在生成...
+                      </template>
                       <template v-else>
                         {{ renderContent(msg.content) }}
                       </template>
                     </div>
+                    <div v-if="msg.is_AI && msg.is_streaming" class="ai-streaming-status">AI 正在生成...</div>
+                    <div v-if="msg.is_AI && msg.error_message" class="ai-message-error">{{ msg.error_message }}</div>
                     <!-- 已读状态显示 -->
                     <div v-if="isMessageRead(msg) !== null" class="message-read-status">
                       <span v-if="isMessageRead(msg)" class="read">已读</span>
@@ -2541,7 +2546,7 @@ function scrollToMessage(messageId: string) {
 function sendTextMessage() {
   if (!selectedGroupId.value || !draftMessage.value.trim()) return;
   if (aiTriggerEnabled.value && !selectedAIModelName.value) {
-    notify("请先选择 AI 模型");
+    notify("平台 AI 尚未配置，请联系管理员");
     return;
   }
   const payload: Record<string, unknown> = {
@@ -3371,6 +3376,18 @@ onBeforeUnmount(() => {
 .message-row.highlighted {
   animation: highlight-pulse 3s ease-out;
   background-color: rgba(255, 215, 0, 0.3);
+}
+
+.ai-streaming-status {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.ai-message-error {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #b42318;
 }
 
 @keyframes highlight-pulse {
