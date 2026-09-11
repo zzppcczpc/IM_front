@@ -115,6 +115,9 @@
           <button class="tab-btn" :class="{ active: activeSidebar === 'ai' }" @click="openAIChat">
             <Bot :size="16" /> AI
           </button>
+          <button class="tab-btn" :class="{ active: activeSidebar === 'knowledge' }" @click="openKnowledgeBases">
+            <BookOpen :size="16" /> 知识库
+          </button>
           <button class="tab-btn" :class="{ active: activeSidebar === 'friends' }" @click="activeSidebar = 'friends'">
             <Users :size="16" /> 好友
           </button>
@@ -306,6 +309,34 @@
             </div>
           </div>
 
+          <div v-else-if="activeSidebar === 'knowledge'" class="small-grid">
+            <div class="panel-card">
+              <div class="panel-title">
+                <span>知识库</span>
+                <button class="btn ghost" @click="loadKnowledgeBases" :disabled="knowledgeBaseLoading">
+                  {{ knowledgeBaseLoading ? '加载中...' : '刷新' }}
+                </button>
+              </div>
+              <button class="btn primary" @click="startCreateKnowledgeBase">新建知识库</button>
+            </div>
+            <div class="list">
+              <div v-for="item in knowledgeBases" :key="item.id" class="list-item">
+                <div class="list-item-head">
+                  <strong>{{ item.name }}</strong>
+                  <span class="muted">{{ item.file_count }} 个文件</span>
+                </div>
+                <div class="muted">{{ item.description || '暂无描述' }}</div>
+                <div class="toolbar">
+                  <button class="btn ghost" @click="startEditKnowledgeBase(item)">编辑</button>
+                  <button class="btn danger" @click="removeKnowledgeBase(item)">删除</button>
+                </div>
+              </div>
+              <div v-if="!knowledgeBaseLoading && knowledgeBases.length === 0" class="empty-state">
+                <span class="muted">还没有知识库</span>
+              </div>
+            </div>
+          </div>
+
           <div v-else class="small-grid">
             <div class="panel-card">
               <div class="panel-title">
@@ -425,6 +456,50 @@
               </div>
             </div>
           </section>
+        </div>
+
+        <div v-else-if="activeSidebar === 'knowledge'" class="panel-card knowledge-main-card">
+          <div class="chat-head">
+            <div class="chat-title">
+              <strong>我的知识库</strong>
+              <span class="muted">当前阶段管理知识库元数据</span>
+            </div>
+            <button class="btn primary" @click="startCreateKnowledgeBase">新建知识库</button>
+          </div>
+          <div v-if="knowledgeBaseEditorVisible" class="knowledge-editor">
+            <div class="field">
+              <label>名称</label>
+              <input v-model.trim="knowledgeBaseForm.name" maxlength="120" placeholder="例如：产品资料库" />
+            </div>
+            <div class="field">
+              <label>描述</label>
+              <textarea v-model="knowledgeBaseForm.description" maxlength="2000" rows="4" placeholder="描述这个知识库存放的资料"></textarea>
+            </div>
+            <div class="toolbar">
+              <button class="btn primary" :disabled="knowledgeBaseSaving" @click="saveKnowledgeBase">
+                {{ knowledgeBaseSaving ? '保存中...' : '保存' }}
+              </button>
+              <button class="btn ghost" :disabled="knowledgeBaseSaving" @click="cancelKnowledgeBaseEdit">取消</button>
+            </div>
+          </div>
+          <div v-else-if="knowledgeBases.length" class="small-grid knowledge-detail-list">
+            <div v-for="item in knowledgeBases" :key="item.id" class="panel-card">
+              <div class="panel-title">
+                <strong>{{ item.name }}</strong>
+                <span class="muted">{{ item.file_count }} 个文件</span>
+              </div>
+              <p class="muted">{{ item.description || '暂无描述' }}</p>
+              <div class="toolbar">
+                <button class="btn ghost" @click="startEditKnowledgeBase(item)">编辑信息</button>
+                <button class="btn danger" @click="removeKnowledgeBase(item)">删除知识库</button>
+              </div>
+            </div>
+          </div>
+          <div v-else class="empty-state">
+            <BookOpen :size="42" />
+            <strong>还没有知识库</strong>
+            <span class="muted">先创建一个知识库，后续可以上传文件供 AI 使用。</span>
+          </div>
         </div>
 
         <div v-else-if="selectedGroup" class="chat-card" :class="selectedGroup.type === 'private' ? 'is-private-chat' : 'is-group-chat'">
@@ -1024,6 +1099,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import {
   Bot,
+  BookOpen,
   ChevronDown,
   Clock3,
   Ellipsis,
@@ -1092,8 +1168,12 @@ import {
   clearGroupMessages,  // 新增：清空会话消息接口
   searchMessages,  // 新增：消息搜索接口
   stopAIMessage,
+  getKnowledgeBases,
+  createKnowledgeBase,
+  updateKnowledgeBase,
+  deleteKnowledgeBase,
 } from "./services/api";
-import type { AuthMode, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, LoginUser, Message, MutedMember, User, SearchResult, SearchResponse, AIProviderConfig } from "./types";
+import type { AuthMode, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, LoginUser, Message, MutedMember, User, SearchResult, SearchResponse, AIProviderConfig, KnowledgeBase } from "./types";
 
 type AIMessage = {
   id: string;
@@ -1118,7 +1198,7 @@ const hasMoreHistory = ref(false); // 新增：是否还有更多历史消息
 const nextCursor = ref<string | null>(null); // 新增：下一页游标
 const pendingHistoryScroll = ref<{ top: number; height: number } | null>(null);
 const ws = ref<WebSocket | null>(null);
-const activeSidebar = ref<"groups" | "ai" | "friends" | "profile">("groups");
+const activeSidebar = ref<"groups" | "ai" | "knowledge" | "friends" | "profile">("groups");
 const groups = ref<Group[]>([]);
 const friends = ref<User[]>([]);
 const friendRequests = ref<FriendRequest[]>([]);
@@ -1128,6 +1208,12 @@ const selectedMemberIds = ref<string[]>([]);
 const selectedGroupId = ref("");
 const selectedGroup = ref<Group | null>(null);
 const currentMessages = ref<Message[]>([]);
+const knowledgeBases = ref<KnowledgeBase[]>([]);
+const knowledgeBaseLoading = ref(false);
+const knowledgeBaseSaving = ref(false);
+const knowledgeBaseEditorVisible = ref(false);
+const editingKnowledgeBaseId = ref<string | null>(null);
+const knowledgeBaseForm = reactive({ name: "", description: "" });
 const onlineUsers = ref<Array<{ user_id: string; username: string; device_count: number }>>([]);
 
 // 当前打开群的公告列表。它和聊天消息分开存，避免公告刷新影响消息列表。
@@ -1314,6 +1400,91 @@ function openAIChat() {
   selectedGroup.value = null;
   loadAIProviderState();
   focusAIInput();
+}
+
+async function openKnowledgeBases() {
+  activeSidebar.value = "knowledge";
+  selectedGroupId.value = "";
+  selectedGroup.value = null;
+  await loadKnowledgeBases();
+}
+
+async function loadKnowledgeBases() {
+  if (knowledgeBaseLoading.value) return;
+  knowledgeBaseLoading.value = true;
+  try {
+    knowledgeBases.value = await getKnowledgeBases();
+  } catch (error: any) {
+    notify(error?.response?.data?.message || "知识库列表读取失败");
+  } finally {
+    knowledgeBaseLoading.value = false;
+  }
+}
+
+function resetKnowledgeBaseForm() {
+  knowledgeBaseForm.name = "";
+  knowledgeBaseForm.description = "";
+}
+
+function startCreateKnowledgeBase() {
+  editingKnowledgeBaseId.value = null;
+  resetKnowledgeBaseForm();
+  knowledgeBaseEditorVisible.value = true;
+}
+
+function startEditKnowledgeBase(item: KnowledgeBase) {
+  editingKnowledgeBaseId.value = item.id;
+  knowledgeBaseForm.name = item.name;
+  knowledgeBaseForm.description = item.description || "";
+  knowledgeBaseEditorVisible.value = true;
+}
+
+function cancelKnowledgeBaseEdit() {
+  knowledgeBaseEditorVisible.value = false;
+  editingKnowledgeBaseId.value = null;
+  resetKnowledgeBaseForm();
+}
+
+async function saveKnowledgeBase() {
+  const name = knowledgeBaseForm.name.trim();
+  if (!name) {
+    notify("请输入知识库名称");
+    return;
+  }
+
+  knowledgeBaseSaving.value = true;
+  try {
+    if (editingKnowledgeBaseId.value) {
+      await updateKnowledgeBase(editingKnowledgeBaseId.value, {
+        name,
+        description: knowledgeBaseForm.description.trim(),
+      });
+      notify("知识库修改成功");
+    } else {
+      await createKnowledgeBase({
+        name,
+        description: knowledgeBaseForm.description.trim(),
+      });
+      notify("知识库创建成功");
+    }
+    cancelKnowledgeBaseEdit();
+    await loadKnowledgeBases();
+  } catch (error: any) {
+    notify(error?.response?.data?.message || "知识库保存失败");
+  } finally {
+    knowledgeBaseSaving.value = false;
+  }
+}
+
+async function removeKnowledgeBase(item: KnowledgeBase) {
+  if (!window.confirm(`确定删除知识库“${item.name}”吗？`)) return;
+  try {
+    await deleteKnowledgeBase(item.id);
+    notify("知识库删除成功");
+    await loadKnowledgeBases();
+  } catch (error: any) {
+    notify(error?.response?.data?.message || "知识库删除失败");
+  }
 }
 
 function focusAIInput() {

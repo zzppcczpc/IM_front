@@ -13,6 +13,7 @@ import type {
   User,
   AIChatResponse,
   AIProviderConfig,
+  KnowledgeBase,
 } from "../types";
 
 export const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
@@ -144,6 +145,29 @@ export function markRead(payload: { group_id: string; message_ids: string[] }) {
 
 export function getGroupDetail(groupId: string) {
   return unwrap<Group>(http.get(`/api/group/${groupId}`));
+}
+
+export function getKnowledgeBases() {
+  return unwrap<KnowledgeBase[]>(http.get("/api/knowledge-bases"));
+}
+
+export function createKnowledgeBase(payload: { name: string; description?: string }) {
+  return unwrap<KnowledgeBase>(http.post("/api/knowledge-bases", payload));
+}
+
+export function updateKnowledgeBase(
+  knowledgeBaseId: string,
+  payload: { name?: string; description?: string },
+) {
+  return unwrap<KnowledgeBase>(
+    http.put(`/api/knowledge-bases/${knowledgeBaseId}`, payload),
+  );
+}
+
+export function deleteKnowledgeBase(knowledgeBaseId: string) {
+  return unwrap<{ knowledge_base_id: string }>(
+    http.delete(`/api/knowledge-bases/${knowledgeBaseId}`),
+  );
 }
 
 export function searchUsers(payload: { id?: string; username?: string; phone?: string; email?: string }) {

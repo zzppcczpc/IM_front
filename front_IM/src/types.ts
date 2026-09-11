@@ -169,3 +169,14 @@ export interface AIModelConfig {
   id: string;
   name: string;
 }
+
+export interface KnowledgeBase {
+  id: string;
+  name: string;
+  description: string;
+  owner_id: string;
+  member_ids: string[];
+  file_count: number;
+  created_at: string;
+  updated_at: string;
+}
