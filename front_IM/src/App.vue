@@ -517,7 +517,7 @@
                   <span class="badge" :class="`file-status-${file.status}`">{{ knowledgeBaseFileStatusLabel(file.status) }}</span>
                 </div>
                 <div class="muted">
-                  {{ formatFileSize(file.file_size) }} · {{ formatTime(file.created_at) }}
+                  {{ formatFileSize(file.file_size) }} · {{ file.chunk_count || 0 }} 个 Chunk · {{ formatTime(file.created_at) }}
                 </div>
                 <div v-if="file.error_message" class="ai-message-error">{{ file.error_message }}</div>
                 <div class="toolbar">
@@ -529,7 +529,7 @@
                     重新解析
                   </button>
                   <span v-if="file.status === 'success'" class="muted">
-                    已提取 {{ file.parse_metadata?.text_length || 0 }} 个字符
+                    已提取 {{ file.parse_metadata?.text_length || 0 }} 个字符，生成 {{ file.chunk_count || 0 }} 个 Chunk
                   </span>
                 </div>
               </div>
