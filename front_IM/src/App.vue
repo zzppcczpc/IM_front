@@ -520,6 +520,18 @@
                   {{ formatFileSize(file.file_size) }} · {{ formatTime(file.created_at) }}
                 </div>
                 <div v-if="file.error_message" class="ai-message-error">{{ file.error_message }}</div>
+                <div class="toolbar">
+                  <button
+                    v-if="file.status === 'failed'"
+                    class="btn ghost"
+                    @click="retryKnowledgeBaseFile(file)"
+                  >
+                    重新解析
+                  </button>
+                  <span v-if="file.status === 'success'" class="muted">
+                    已提取 {{ file.parse_metadata?.text_length || 0 }} 个字符
+                  </span>
+                </div>
               </div>
             </div>
             <div v-else class="empty-state">
@@ -1220,6 +1232,7 @@ import {
   deleteKnowledgeBase,
   getKnowledgeBaseFiles,
   uploadKnowledgeBaseFile,
+  parseKnowledgeBaseFile,
 } from "./services/api";
 import type { AuthMode, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, LoginUser, Message, MutedMember, User, SearchResult, SearchResponse, AIProviderConfig, KnowledgeBase, KnowledgeBaseFile } from "./types";
 
@@ -1553,10 +1566,28 @@ async function onKnowledgeBaseFileChange(event: Event) {
     );
     if (knowledgeBase) knowledgeBase.file_count += 1;
     notify("文件上传成功，当前状态：已上传");
+    window.setTimeout(() => {
+      loadKnowledgeBaseFiles(selectedKnowledgeBaseId.value);
+    }, 1000);
   } catch (error: any) {
     notify(error?.response?.data?.message || "知识库文件上传失败");
   } finally {
     knowledgeBaseFileUploading.value = false;
+  }
+}
+
+async function retryKnowledgeBaseFile(file: KnowledgeBaseFile) {
+  if (!selectedKnowledgeBaseId.value) return;
+  try {
+    await parseKnowledgeBaseFile(selectedKnowledgeBaseId.value, file.id);
+    file.status = "parsing";
+    file.error_message = null;
+    notify("已重新提交解析任务");
+    window.setTimeout(() => {
+      loadKnowledgeBaseFiles(selectedKnowledgeBaseId.value);
+    }, 1000);
+  } catch (error: any) {
+    notify(error?.response?.data?.message || "重新解析失败");
   }
 }
 

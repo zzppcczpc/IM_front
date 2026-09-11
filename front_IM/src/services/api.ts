@@ -187,6 +187,12 @@ export function uploadKnowledgeBaseFile(knowledgeBaseId: string, file: File) {
   );
 }
 
+export function parseKnowledgeBaseFile(knowledgeBaseId: string, fileId: string) {
+  return unwrap<{ file_id: string; status: KnowledgeBaseFile["status"] }>(
+    http.post(`/api/knowledge-bases/${knowledgeBaseId}/files/${fileId}/parse`),
+  );
+}
+
 export function searchUsers(payload: { id?: string; username?: string; phone?: string; email?: string }) {
   return unwrap<User[]>(http.post("/api/user/search", payload));
 }

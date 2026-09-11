@@ -191,6 +191,8 @@ export interface KnowledgeBaseFile {
   file_size: number;
   status: "uploaded" | "parsing" | "chunking" | "vectorizing" | "success" | "failed";
   error_message?: string | null;
+  parsed_text?: string | null;
+  parse_metadata?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
