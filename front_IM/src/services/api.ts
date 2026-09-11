@@ -193,6 +193,12 @@ export function parseKnowledgeBaseFile(knowledgeBaseId: string, fileId: string) 
   );
 }
 
+export function vectorizeKnowledgeBaseFile(knowledgeBaseId: string, fileId: string) {
+  return unwrap<{ file_id: string; status: KnowledgeBaseFile["status"]; chunk_count: number }>(
+    http.post(`/api/knowledge-bases/${knowledgeBaseId}/files/${fileId}/vectorize`),
+  );
+}
+
 export function searchUsers(payload: { id?: string; username?: string; phone?: string; email?: string }) {
   return unwrap<User[]>(http.post("/api/user/search", payload));
 }

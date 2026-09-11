@@ -193,6 +193,8 @@ export interface KnowledgeBaseFile {
   error_message?: string | null;
   parsed_text?: string | null;
   parse_metadata?: Record<string, unknown>;
+  chunk_count: number;
+  vector_error_message?: string | null;
   created_at: string;
   updated_at: string;
 }

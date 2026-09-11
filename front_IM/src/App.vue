@@ -520,6 +520,9 @@
                   {{ formatFileSize(file.file_size) }} · {{ file.chunk_count || 0 }} 个 Chunk · {{ formatTime(file.created_at) }}
                 </div>
                 <div v-if="file.error_message" class="ai-message-error">{{ file.error_message }}</div>
+                <div v-if="file.vector_error_message" class="ai-message-error">
+                  向量化：{{ file.vector_error_message }}
+                </div>
                 <div class="toolbar">
                   <button
                     v-if="file.status === 'failed'"
@@ -527,6 +530,13 @@
                     @click="retryKnowledgeBaseFile(file)"
                   >
                     重新解析
+                  </button>
+                  <button
+                    v-if="file.vector_error_message && file.chunk_count"
+                    class="btn ghost"
+                    @click="retryKnowledgeBaseVectorization(file)"
+                  >
+                    重新向量化
                   </button>
                   <span v-if="file.status === 'success'" class="muted">
                     已提取 {{ file.parse_metadata?.text_length || 0 }} 个字符，生成 {{ file.chunk_count || 0 }} 个 Chunk
@@ -1233,6 +1243,7 @@ import {
   getKnowledgeBaseFiles,
   uploadKnowledgeBaseFile,
   parseKnowledgeBaseFile,
+  vectorizeKnowledgeBaseFile,
 } from "./services/api";
 import type { AuthMode, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, LoginUser, Message, MutedMember, User, SearchResult, SearchResponse, AIProviderConfig, KnowledgeBase, KnowledgeBaseFile } from "./types";
 
@@ -1588,6 +1599,22 @@ async function retryKnowledgeBaseFile(file: KnowledgeBaseFile) {
     }, 1000);
   } catch (error: any) {
     notify(error?.response?.data?.message || "重新解析失败");
+  }
+}
+
+async function retryKnowledgeBaseVectorization(file: KnowledgeBaseFile) {
+  if (!selectedKnowledgeBaseId.value) return;
+  try {
+    await vectorizeKnowledgeBaseFile(selectedKnowledgeBaseId.value, file.id);
+    file.status = "vectorizing";
+    file.error_message = null;
+    file.vector_error_message = null;
+    notify("已重新提交向量化任务");
+    window.setTimeout(() => {
+      loadKnowledgeBaseFiles(selectedKnowledgeBaseId.value);
+    }, 1000);
+  } catch (error: any) {
+    notify(error?.response?.data?.message || "重新向量化失败");
   }
 }
 
