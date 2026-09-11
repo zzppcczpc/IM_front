@@ -330,6 +330,14 @@ export function searchMessages(params: { group_id: string; keyword: string; page
   );
 }
 
+export function stopAIMessage(payload: { group_id: string; message_id: string }) {
+  return unwrap<{
+    message_id: string;
+    stop: boolean;
+    is_streaming: boolean;
+  }>(http.put("/api/chat/stop", payload));
+}
+
 export function getAIProviderConfig() {
   return unwrap<AIProviderConfig>(http.get("/api/ai/provider-config"));
 }

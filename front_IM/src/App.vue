@@ -606,6 +606,7 @@
                       </template>
                     </div>
                     <div v-if="msg.is_AI && msg.is_streaming" class="ai-streaming-status">AI 正在生成...</div>
+                    <div v-else-if="msg.is_AI && msg.stop" class="ai-streaming-status">已停止生成</div>
                     <div v-if="msg.is_AI && msg.error_message" class="ai-message-error">{{ msg.error_message }}</div>
                     <!-- 已读状态显示 -->
                     <div v-if="isMessageRead(msg) !== null" class="message-read-status">
@@ -635,6 +636,15 @@
                   >
                     <Bot :size="16" />
                     {{ aiTriggerEnabled ? '关闭AI回复' : '让AI回复' }}
+                  </button>
+                  <button
+                    v-if="selectedGroup.type !== 'private' && currentStreamingAIMessage"
+                    class="btn danger"
+                    :disabled="stoppingAIMessage"
+                    @click="stopCurrentAIMessage"
+                  >
+                    <Square :size="15" />
+                    {{ stoppingAIMessage ? '停止中...' : '停止AI生成' }}
                   </button>
                   <span v-if="aiTriggerEnabled" class="muted ai-trigger-model">
                     模型：{{ selectedAIModelName || '未选择' }}
@@ -1025,6 +1035,7 @@ import {
   Phone,
   Search,
   SendHorizontal,
+  Square,
   UserRound,
   Users,
   Video,
@@ -1080,6 +1091,7 @@ import {
   toggleGroupPin,  // 新增：置顶接口
   clearGroupMessages,  // 新增：清空会话消息接口
   searchMessages,  // 新增：消息搜索接口
+  stopAIMessage,
 } from "./services/api";
 import type { AuthMode, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, LoginUser, Message, MutedMember, User, SearchResult, SearchResponse, AIProviderConfig } from "./types";
 
@@ -1173,6 +1185,16 @@ const aiModelsLoading = ref(false);
 const aiProviderConfig = ref<AIProviderConfig | null>(null);
 const selectedAIModelName = ref("");
 const aiTriggerEnabled = ref(false);
+const stoppingAIMessage = ref(false);
+
+const currentStreamingAIMessage = computed(() =>
+  currentMessages.value.find(
+    (message) =>
+      message.group_id === selectedGroupId.value &&
+      message.is_AI === true &&
+      message.is_streaming === true,
+  ) || null,
+);
 
 // 消息右键菜单相关
 const contextMenu = ref<{
@@ -1370,6 +1392,24 @@ async function toggleAITrigger() {
 
   aiTriggerEnabled.value = true;
   notify(`已开启 AI 回复：${selectedAIModelName.value}`);
+}
+
+async function stopCurrentAIMessage() {
+  const message = currentStreamingAIMessage.value;
+  if (!message || !selectedGroupId.value || stoppingAIMessage.value) return;
+
+  stoppingAIMessage.value = true;
+  try {
+    await stopAIMessage({
+      group_id: selectedGroupId.value,
+      message_id: message.id,
+    });
+    notify("已停止 AI 生成");
+  } catch (error: any) {
+    notify(error?.response?.data?.message || "停止 AI 生成失败");
+  } finally {
+    stoppingAIMessage.value = false;
+  }
 }
 
 // 监听输入框变化，发送输入中状态
