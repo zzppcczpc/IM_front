@@ -14,6 +14,7 @@ import type {
   AIChatResponse,
   AIProviderConfig,
   KnowledgeBase,
+  KnowledgeBaseFile,
 } from "../types";
 
 export const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
@@ -167,6 +168,22 @@ export function updateKnowledgeBase(
 export function deleteKnowledgeBase(knowledgeBaseId: string) {
   return unwrap<{ knowledge_base_id: string }>(
     http.delete(`/api/knowledge-bases/${knowledgeBaseId}`),
+  );
+}
+
+export function getKnowledgeBaseFiles(knowledgeBaseId: string) {
+  return unwrap<KnowledgeBaseFile[]>(
+    http.get(`/api/knowledge-bases/${knowledgeBaseId}/files`),
+  );
+}
+
+export function uploadKnowledgeBaseFile(knowledgeBaseId: string, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return unwrap<KnowledgeBaseFile>(
+    http.post(`/api/knowledge-bases/${knowledgeBaseId}/files`, form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    }),
   );
 }
 

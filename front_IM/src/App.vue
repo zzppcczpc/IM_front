@@ -327,6 +327,7 @@
                 </div>
                 <div class="muted">{{ item.description || '暂无描述' }}</div>
                 <div class="toolbar">
+                  <button class="btn primary" @click="openKnowledgeBase(item)">打开</button>
                   <button class="btn ghost" @click="startEditKnowledgeBase(item)">编辑</button>
                   <button class="btn danger" @click="removeKnowledgeBase(item)">删除</button>
                 </div>
@@ -482,6 +483,50 @@
               <button class="btn ghost" :disabled="knowledgeBaseSaving" @click="cancelKnowledgeBaseEdit">取消</button>
             </div>
           </div>
+          <div v-else-if="selectedKnowledgeBaseId" class="knowledge-file-panel">
+            <div class="chat-head">
+              <div class="chat-title">
+                <strong>{{ selectedKnowledgeBase?.name }}</strong>
+                <span class="muted">{{ selectedKnowledgeBase?.description || '暂无描述' }}</span>
+              </div>
+              <div class="toolbar">
+                <label class="btn primary">
+                  选择文件
+                  <input
+                    type="file"
+                    hidden
+                    accept=".pdf,.docx,.pptx,.xlsx,.csv,.txt,.md"
+                    @change="onKnowledgeBaseFileChange"
+                  />
+                </label>
+                <button class="btn ghost" @click="loadKnowledgeBaseFiles(selectedKnowledgeBaseId)" :disabled="knowledgeBaseFilesLoading">
+                  {{ knowledgeBaseFilesLoading ? '刷新中...' : '刷新状态' }}
+                </button>
+                <button class="btn ghost" @click="closeKnowledgeBase">返回列表</button>
+              </div>
+            </div>
+            <div class="muted knowledge-upload-hint">
+              支持 PDF、DOCX、PPTX、XLSX、CSV、TXT、MD，单个文件不超过 100MB。
+            </div>
+            <div v-if="knowledgeBaseFileUploading" class="muted">文件上传中...</div>
+            <div v-if="knowledgeBaseFilesLoading && !knowledgeBaseFiles.length" class="muted">正在读取文件列表...</div>
+            <div v-else-if="knowledgeBaseFiles.length" class="list">
+              <div v-for="file in knowledgeBaseFiles" :key="file.id" class="list-item">
+                <div class="list-item-head">
+                  <strong>{{ file.file_name }}</strong>
+                  <span class="badge" :class="`file-status-${file.status}`">{{ knowledgeBaseFileStatusLabel(file.status) }}</span>
+                </div>
+                <div class="muted">
+                  {{ formatFileSize(file.file_size) }} · {{ formatTime(file.created_at) }}
+                </div>
+                <div v-if="file.error_message" class="ai-message-error">{{ file.error_message }}</div>
+              </div>
+            </div>
+            <div v-else class="empty-state">
+              <BookOpen :size="34" />
+              <span class="muted">这个知识库还没有文件</span>
+            </div>
+          </div>
           <div v-else-if="knowledgeBases.length" class="small-grid knowledge-detail-list">
             <div v-for="item in knowledgeBases" :key="item.id" class="panel-card">
               <div class="panel-title">
@@ -490,6 +535,7 @@
               </div>
               <p class="muted">{{ item.description || '暂无描述' }}</p>
               <div class="toolbar">
+                <button class="btn primary" @click="openKnowledgeBase(item)">打开</button>
                 <button class="btn ghost" @click="startEditKnowledgeBase(item)">编辑信息</button>
                 <button class="btn danger" @click="removeKnowledgeBase(item)">删除知识库</button>
               </div>
@@ -1172,8 +1218,10 @@ import {
   createKnowledgeBase,
   updateKnowledgeBase,
   deleteKnowledgeBase,
+  getKnowledgeBaseFiles,
+  uploadKnowledgeBaseFile,
 } from "./services/api";
-import type { AuthMode, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, LoginUser, Message, MutedMember, User, SearchResult, SearchResponse, AIProviderConfig, KnowledgeBase } from "./types";
+import type { AuthMode, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, LoginUser, Message, MutedMember, User, SearchResult, SearchResponse, AIProviderConfig, KnowledgeBase, KnowledgeBaseFile } from "./types";
 
 type AIMessage = {
   id: string;
@@ -1214,6 +1262,14 @@ const knowledgeBaseSaving = ref(false);
 const knowledgeBaseEditorVisible = ref(false);
 const editingKnowledgeBaseId = ref<string | null>(null);
 const knowledgeBaseForm = reactive({ name: "", description: "" });
+const selectedKnowledgeBaseId = ref<string | null>(null);
+const knowledgeBaseFiles = ref<KnowledgeBaseFile[]>([]);
+const knowledgeBaseFilesLoading = ref(false);
+const knowledgeBaseFileUploading = ref(false);
+
+const selectedKnowledgeBase = computed(() =>
+  knowledgeBases.value.find((item) => item.id === selectedKnowledgeBaseId.value) || null,
+);
 const onlineUsers = ref<Array<{ user_id: string; username: string; device_count: number }>>([]);
 
 // 当前打开群的公告列表。它和聊天消息分开存，避免公告刷新影响消息列表。
@@ -1406,6 +1462,7 @@ async function openKnowledgeBases() {
   activeSidebar.value = "knowledge";
   selectedGroupId.value = "";
   selectedGroup.value = null;
+  selectedKnowledgeBaseId.value = null;
   await loadKnowledgeBases();
 }
 
@@ -1427,6 +1484,7 @@ function resetKnowledgeBaseForm() {
 }
 
 function startCreateKnowledgeBase() {
+  selectedKnowledgeBaseId.value = null;
   editingKnowledgeBaseId.value = null;
   resetKnowledgeBaseForm();
   knowledgeBaseEditorVisible.value = true;
@@ -1443,6 +1501,81 @@ function cancelKnowledgeBaseEdit() {
   knowledgeBaseEditorVisible.value = false;
   editingKnowledgeBaseId.value = null;
   resetKnowledgeBaseForm();
+}
+
+async function openKnowledgeBase(item: KnowledgeBase) {
+  knowledgeBaseEditorVisible.value = false;
+  editingKnowledgeBaseId.value = null;
+  selectedKnowledgeBaseId.value = item.id;
+  await loadKnowledgeBaseFiles(item.id);
+}
+
+function closeKnowledgeBase() {
+  selectedKnowledgeBaseId.value = null;
+  knowledgeBaseFiles.value = [];
+}
+
+async function loadKnowledgeBaseFiles(knowledgeBaseId: string | null) {
+  if (!knowledgeBaseId) return;
+  knowledgeBaseFilesLoading.value = true;
+  try {
+    knowledgeBaseFiles.value = await getKnowledgeBaseFiles(knowledgeBaseId);
+  } catch (error: any) {
+    notify(error?.response?.data?.message || "知识库文件列表读取失败");
+  } finally {
+    knowledgeBaseFilesLoading.value = false;
+  }
+}
+
+async function onKnowledgeBaseFileChange(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file || !selectedKnowledgeBaseId.value) return;
+
+  const allowedExtensions = [".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".txt", ".md"];
+  const extension = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
+  if (!allowedExtensions.includes(extension)) {
+    notify("只支持 PDF、DOCX、PPTX、XLSX、CSV、TXT、MD 文件");
+    return;
+  }
+  if (file.size > 100 * 1024 * 1024) {
+    notify("文件不能超过 100MB");
+    return;
+  }
+
+  knowledgeBaseFileUploading.value = true;
+  try {
+    const uploaded = await uploadKnowledgeBaseFile(selectedKnowledgeBaseId.value, file);
+    knowledgeBaseFiles.value = [uploaded, ...knowledgeBaseFiles.value];
+    const knowledgeBase = knowledgeBases.value.find(
+      (item) => item.id === selectedKnowledgeBaseId.value,
+    );
+    if (knowledgeBase) knowledgeBase.file_count += 1;
+    notify("文件上传成功，当前状态：已上传");
+  } catch (error: any) {
+    notify(error?.response?.data?.message || "知识库文件上传失败");
+  } finally {
+    knowledgeBaseFileUploading.value = false;
+  }
+}
+
+function knowledgeBaseFileStatusLabel(status: KnowledgeBaseFile["status"]) {
+  const labels: Record<KnowledgeBaseFile["status"], string> = {
+    uploaded: "已上传",
+    parsing: "解析中",
+    chunking: "切分中",
+    vectorizing: "向量化中",
+    success: "处理成功",
+    failed: "处理失败",
+  };
+  return labels[status] || status;
+}
+
+function formatFileSize(size: number) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
 async function saveKnowledgeBase() {

@@ -180,3 +180,17 @@ export interface KnowledgeBase {
   created_at: string;
   updated_at: string;
 }
+
+export interface KnowledgeBaseFile {
+  id: string;
+  knowledge_base_id: string;
+  owner_id: string;
+  file_name: string;
+  file_type: string;
+  file_extension: string;
+  file_size: number;
+  status: "uploaded" | "parsing" | "chunking" | "vectorizing" | "success" | "failed";
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+}
