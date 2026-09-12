@@ -211,6 +211,8 @@ export interface KnowledgeBaseSearchChunk {
   retrieval?: "hybrid" | "bm25" | "dense" | "none";
   retrieval_ranks?: Record<string, number>;
   retrieval_scores?: Record<string, number>;
+  rerank_score?: number | null;
+  reranked?: boolean;
   metadata: Record<string, unknown>;
 }
 
@@ -231,6 +233,8 @@ export interface ChatHistoryQASearchItem {
   retrieval?: "hybrid" | "bm25" | "dense" | "none";
   retrieval_ranks?: Record<string, number>;
   retrieval_scores?: Record<string, number>;
+  rerank_score?: number | null;
+  reranked?: boolean;
 }
 
 export interface ChatHistoryQASearchResponse {

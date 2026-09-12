@@ -523,7 +523,8 @@
                 <div class="list-item-head">
                   <strong>{{ item.filename || '未知文件' }}</strong>
                   <span class="muted">
-                    {{ item.retrieval || 'hybrid' }} · RRF {{ item.rrf_score?.toFixed(4) || item.score.toFixed(4) }}
+                    {{ item.reranked ? 'Reranker' : (item.retrieval || 'hybrid') }}
+                    · {{ item.reranked ? `重排 ${item.rerank_score?.toFixed(4)}` : `RRF ${(item.rrf_score || item.score).toFixed(4)}` }}
                   </span>
                 </div>
                 <div class="muted">
@@ -656,8 +657,8 @@
                 <div v-for="item in chatHistoryQAResults" :key="item.qa_id" class="chat-history-qa-item">
                   <div class="chat-history-qa-meta">
                     <span>
-                      {{ item.retrieval || 'hybrid' }} · RRF
-                      {{ item.rrf_score?.toFixed(4) || item.score.toFixed(4) }}
+                      {{ item.reranked ? 'Reranker' : (item.retrieval || 'hybrid') }}
+                      · {{ item.reranked ? `重排 ${item.rerank_score?.toFixed(4)}` : `RRF ${(item.rrf_score || item.score).toFixed(4)}` }}
                       · BM25 {{ item.retrieval_ranks?.bm25 || '-' }}
                       · Dense {{ item.retrieval_ranks?.dense || '-' }}
                     </span>
