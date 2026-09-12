@@ -15,6 +15,7 @@ import type {
   AIProviderConfig,
   KnowledgeBase,
   KnowledgeBaseFile,
+  KnowledgeBaseSearchResponse,
 } from "../types";
 
 export const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
@@ -196,6 +197,15 @@ export function parseKnowledgeBaseFile(knowledgeBaseId: string, fileId: string) 
 export function vectorizeKnowledgeBaseFile(knowledgeBaseId: string, fileId: string) {
   return unwrap<{ file_id: string; status: KnowledgeBaseFile["status"]; chunk_count: number }>(
     http.post(`/api/knowledge-bases/${knowledgeBaseId}/files/${fileId}/vectorize`),
+  );
+}
+
+export function searchKnowledgeBase(
+  knowledgeBaseId: string,
+  payload: { query: string; top_k?: number },
+) {
+  return unwrap<KnowledgeBaseSearchResponse>(
+    http.post(`/api/knowledge-bases/${knowledgeBaseId}/search`, payload),
   );
 }
 

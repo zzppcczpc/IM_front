@@ -508,6 +508,26 @@
             <div class="muted knowledge-upload-hint">
               支持 PDF、DOCX、PPTX、XLSX、CSV、TXT、MD，单个文件不超过 100MB。
             </div>
+            <div class="knowledge-search-panel">
+              <input
+                v-model.trim="knowledgeSearchQuery"
+                placeholder="输入问题，检索这个知识库里的相关片段"
+                @keydown.enter.prevent="runKnowledgeSearch"
+              />
+              <button class="btn primary" :disabled="knowledgeSearchLoading || !knowledgeSearchQuery" @click="runKnowledgeSearch">
+                {{ knowledgeSearchLoading ? '检索中...' : '检索' }}
+              </button>
+            </div>
+            <div v-if="knowledgeSearchResults.length" class="knowledge-search-results">
+              <div v-for="item in knowledgeSearchResults" :key="item.chunk_id" class="knowledge-search-item">
+                <div class="list-item-head">
+                  <strong>{{ item.filename || '未知文件' }}</strong>
+                  <span class="muted">分数 {{ item.score.toFixed(4) }}</span>
+                </div>
+                <div class="muted">Chunk {{ item.chunk_index + 1 }}</div>
+                <div class="knowledge-search-content">{{ item.content }}</div>
+              </div>
+            </div>
             <div v-if="knowledgeBaseFileUploading" class="muted">文件上传中...</div>
             <div v-if="knowledgeBaseFilesLoading && !knowledgeBaseFiles.length" class="muted">正在读取文件列表...</div>
             <div v-else-if="knowledgeBaseFiles.length" class="list">
@@ -1244,8 +1264,9 @@ import {
   uploadKnowledgeBaseFile,
   parseKnowledgeBaseFile,
   vectorizeKnowledgeBaseFile,
+  searchKnowledgeBase,
 } from "./services/api";
-import type { AuthMode, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, LoginUser, Message, MutedMember, User, SearchResult, SearchResponse, AIProviderConfig, KnowledgeBase, KnowledgeBaseFile } from "./types";
+import type { AuthMode, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, LoginUser, Message, MutedMember, User, SearchResult, SearchResponse, AIProviderConfig, KnowledgeBase, KnowledgeBaseFile, KnowledgeBaseSearchChunk } from "./types";
 
 type AIMessage = {
   id: string;
@@ -1290,6 +1311,9 @@ const selectedKnowledgeBaseId = ref<string | null>(null);
 const knowledgeBaseFiles = ref<KnowledgeBaseFile[]>([]);
 const knowledgeBaseFilesLoading = ref(false);
 const knowledgeBaseFileUploading = ref(false);
+const knowledgeSearchQuery = ref("");
+const knowledgeSearchLoading = ref(false);
+const knowledgeSearchResults = ref<KnowledgeBaseSearchChunk[]>([]);
 
 const selectedKnowledgeBase = computed(() =>
   knowledgeBases.value.find((item) => item.id === selectedKnowledgeBaseId.value) || null,
@@ -1537,6 +1561,25 @@ async function openKnowledgeBase(item: KnowledgeBase) {
 function closeKnowledgeBase() {
   selectedKnowledgeBaseId.value = null;
   knowledgeBaseFiles.value = [];
+  knowledgeSearchQuery.value = "";
+  knowledgeSearchResults.value = [];
+}
+
+async function runKnowledgeSearch() {
+  if (!selectedKnowledgeBaseId.value || !knowledgeSearchQuery.value) return;
+  knowledgeSearchLoading.value = true;
+  try {
+    const result = await searchKnowledgeBase(selectedKnowledgeBaseId.value, {
+      query: knowledgeSearchQuery.value,
+      top_k: 5,
+    });
+    knowledgeSearchResults.value = result.chunks;
+    if (!result.chunks.length) notify("没有检索到相关片段");
+  } catch (error: any) {
+    notify(error?.response?.data?.message || "知识库检索失败");
+  } finally {
+    knowledgeSearchLoading.value = false;
+  }
 }
 
 async function loadKnowledgeBaseFiles(knowledgeBaseId: string | null) {
@@ -4027,5 +4070,36 @@ onBeforeUnmount(() => {
   min-width: 45px;
   text-align: right;
   flex-shrink: 0;
+}
+
+.knowledge-search-panel {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.knowledge-search-panel input {
+  flex: 1;
+  min-width: 0;
+}
+
+.knowledge-search-results {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 14px;
+}
+
+.knowledge-search-item {
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.knowledge-search-content {
+  margin-top: 6px;
+  color: #1f2937;
+  line-height: 1.6;
+  white-space: pre-wrap;
 }
 </style>

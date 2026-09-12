@@ -198,3 +198,19 @@ export interface KnowledgeBaseFile {
   created_at: string;
   updated_at: string;
 }
+
+export interface KnowledgeBaseSearchChunk {
+  chunk_id: string;
+  knowledge_base_id: string;
+  file_id: string;
+  chunk_index: number;
+  filename: string;
+  content: string;
+  score: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface KnowledgeBaseSearchResponse {
+  query: string;
+  chunks: KnowledgeBaseSearchChunk[];
+}
