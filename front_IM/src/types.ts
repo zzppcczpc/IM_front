@@ -207,6 +207,10 @@ export interface KnowledgeBaseSearchChunk {
   filename: string;
   content: string;
   score: number;
+  rrf_score?: number;
+  retrieval?: "hybrid" | "bm25" | "dense" | "none";
+  retrieval_ranks?: Record<string, number>;
+  retrieval_scores?: Record<string, number>;
   metadata: Record<string, unknown>;
 }
 
@@ -223,6 +227,10 @@ export interface ChatHistoryQASearchItem {
   user_message_id: string;
   ai_message_id: string;
   score: number;
+  rrf_score?: number;
+  retrieval?: "hybrid" | "bm25" | "dense" | "none";
+  retrieval_ranks?: Record<string, number>;
+  retrieval_scores?: Record<string, number>;
 }
 
 export interface ChatHistoryQASearchResponse {

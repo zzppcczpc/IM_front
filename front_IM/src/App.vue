@@ -522,9 +522,15 @@
               <div v-for="item in knowledgeSearchResults" :key="item.chunk_id" class="knowledge-search-item">
                 <div class="list-item-head">
                   <strong>{{ item.filename || '未知文件' }}</strong>
-                  <span class="muted">分数 {{ item.score.toFixed(4) }}</span>
+                  <span class="muted">
+                    {{ item.retrieval || 'hybrid' }} · RRF {{ item.rrf_score?.toFixed(4) || item.score.toFixed(4) }}
+                  </span>
                 </div>
-                <div class="muted">Chunk {{ item.chunk_index + 1 }}</div>
+                <div class="muted">
+                  Chunk {{ item.chunk_index + 1 }}
+                  · BM25排名 {{ item.retrieval_ranks?.bm25 || '-' }}
+                  · Dense排名 {{ item.retrieval_ranks?.dense || '-' }}
+                </div>
                 <div class="knowledge-search-content">{{ item.content }}</div>
               </div>
             </div>
@@ -649,7 +655,12 @@
               <div v-if="chatHistoryQAResults.length" class="chat-history-qa-results">
                 <div v-for="item in chatHistoryQAResults" :key="item.qa_id" class="chat-history-qa-item">
                   <div class="chat-history-qa-meta">
-                    <span>相似度 {{ item.score.toFixed(4) }}</span>
+                    <span>
+                      {{ item.retrieval || 'hybrid' }} · RRF
+                      {{ item.rrf_score?.toFixed(4) || item.score.toFixed(4) }}
+                      · BM25 {{ item.retrieval_ranks?.bm25 || '-' }}
+                      · Dense {{ item.retrieval_ranks?.dense || '-' }}
+                    </span>
                   </div>
                   <div class="chat-history-qa-question">问：{{ item.question }}</div>
                   <div class="chat-history-qa-answer">答：{{ item.answer }}</div>
