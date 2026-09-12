@@ -608,11 +608,55 @@
                   {{ loadingHistory ? '加载中...' : '历史' }}
                 </button>
                 <button class="btn ghost" @click="openSearchPanel">搜索</button>
+                <button
+                  v-if="selectedGroup.type !== 'private'"
+                  class="btn ghost"
+                  :class="{ active: showChatHistoryQAPanel }"
+                  @click="toggleChatHistoryQAPanel"
+                >
+                  <Bot :size="16" /> 历史问答
+                </button>
                 <button class="btn ghost" @click="loadOnlineUsers(selectedGroup.id)">在线成员</button>
                 <button class="btn ghost" @click="readCurrentGroup">已读</button>
                 <button class="btn ghost" @click="handleClearCurrentGroupMessages">清空记录</button>
                 <button v-if="selectedGroup.owner_id === currentUser?.id" class="btn danger" @click="dissolveCurrentGroup">解散</button>
                 <button v-else class="btn danger" @click="leaveCurrentGroup">退出</button>
+              </div>
+            </div>
+
+            <div v-if="showChatHistoryQAPanel && selectedGroup.type !== 'private'" class="chat-history-qa-panel">
+              <div class="chat-history-qa-head">
+                <div>
+                  <strong>历史 AI 问答</strong>
+                  <span class="muted">检索这个群里以前成功完成的 AI 问答</span>
+                </div>
+                <span class="muted">{{ chatHistoryQAResults.length }} 条结果</span>
+              </div>
+              <div class="knowledge-search-panel">
+                <input
+                  v-model.trim="chatHistoryQAQuery"
+                  placeholder="例如：客户端怎么安装？"
+                  @keyup.enter="searchChatHistoryQAAction"
+                />
+                <button
+                  class="btn primary"
+                  :disabled="chatHistoryQALoading || !chatHistoryQAQuery"
+                  @click="searchChatHistoryQAAction"
+                >
+                  {{ chatHistoryQALoading ? '检索中...' : '检索' }}
+                </button>
+              </div>
+              <div v-if="chatHistoryQAResults.length" class="chat-history-qa-results">
+                <div v-for="item in chatHistoryQAResults" :key="item.qa_id" class="chat-history-qa-item">
+                  <div class="chat-history-qa-meta">
+                    <span>相似度 {{ item.score.toFixed(4) }}</span>
+                  </div>
+                  <div class="chat-history-qa-question">问：{{ item.question }}</div>
+                  <div class="chat-history-qa-answer">答：{{ item.answer }}</div>
+                </div>
+              </div>
+              <div v-else-if="!chatHistoryQALoading" class="muted chat-history-qa-empty">
+                输入问题后检索历史 AI 问答。
               </div>
             </div>
 
@@ -1265,8 +1309,9 @@ import {
   parseKnowledgeBaseFile,
   vectorizeKnowledgeBaseFile,
   searchKnowledgeBase,
+  searchChatHistoryQA,
 } from "./services/api";
-import type { AuthMode, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, LoginUser, Message, MutedMember, User, SearchResult, SearchResponse, AIProviderConfig, KnowledgeBase, KnowledgeBaseFile, KnowledgeBaseSearchChunk } from "./types";
+import type { AuthMode, ChatHistoryQASearchItem, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, LoginUser, Message, MutedMember, User, SearchResult, SearchResponse, AIProviderConfig, KnowledgeBase, KnowledgeBaseFile, KnowledgeBaseSearchChunk } from "./types";
 
 type AIMessage = {
   id: string;
@@ -1334,6 +1379,10 @@ const friendSearchQuery = ref("");
 
 // 消息搜索相关状态
 const showSearchPanel = ref(false);
+const showChatHistoryQAPanel = ref(false);
+const chatHistoryQAQuery = ref("");
+const chatHistoryQALoading = ref(false);
+const chatHistoryQAResults = ref<ChatHistoryQASearchItem[]>([]);
 const searchKeyword = ref("");
 const searchResults = ref<SearchResult[]>([]);
 const searchLoading = ref(false);
@@ -1579,6 +1628,36 @@ async function runKnowledgeSearch() {
     notify(error?.response?.data?.message || "知识库检索失败");
   } finally {
     knowledgeSearchLoading.value = false;
+  }
+}
+
+async function searchChatHistoryQAAction() {
+  if (!selectedGroupId.value || selectedGroup.value?.type === "private") return;
+  const query = chatHistoryQAQuery.value.trim();
+  if (!query) return;
+
+  chatHistoryQALoading.value = true;
+  try {
+    const response = await searchChatHistoryQA({
+      group_id: selectedGroupId.value,
+      query,
+      top_k: 5,
+    });
+    chatHistoryQAResults.value = response.items;
+    if (!response.items.length) notify("没有检索到相似的历史 AI 问答");
+  } catch (error: any) {
+    chatHistoryQAResults.value = [];
+    notify(error?.response?.data?.message || "历史 AI 问答检索失败");
+  } finally {
+    chatHistoryQALoading.value = false;
+  }
+}
+
+function toggleChatHistoryQAPanel() {
+  showChatHistoryQAPanel.value = !showChatHistoryQAPanel.value;
+  if (!showChatHistoryQAPanel.value) {
+    chatHistoryQAQuery.value = "";
+    chatHistoryQAResults.value = [];
   }
 }
 
@@ -4101,5 +4180,62 @@ onBeforeUnmount(() => {
   color: #1f2937;
   line-height: 1.6;
   white-space: pre-wrap;
+}
+
+.chat-history-qa-panel {
+  margin: 0 14px 10px;
+  padding: 12px;
+  border: 1px solid #dbe4f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.chat-history-qa-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chat-history-qa-head > div {
+  display: grid;
+  gap: 3px;
+}
+
+.chat-history-qa-results {
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.chat-history-qa-item {
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.chat-history-qa-meta {
+  color: #64748b;
+  font-size: 12px;
+  text-align: right;
+}
+
+.chat-history-qa-question {
+  margin-top: 4px;
+  color: #1e3a8a;
+  font-weight: 600;
+}
+
+.chat-history-qa-answer {
+  margin-top: 6px;
+  color: #1f2937;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.chat-history-qa-empty {
+  padding: 8px 0 2px;
 }
 </style>

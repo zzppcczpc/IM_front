@@ -214,3 +214,18 @@ export interface KnowledgeBaseSearchResponse {
   query: string;
   chunks: KnowledgeBaseSearchChunk[];
 }
+
+export interface ChatHistoryQASearchItem {
+  qa_id: string;
+  group_id: string;
+  question: string;
+  answer: string;
+  user_message_id: string;
+  ai_message_id: string;
+  score: number;
+}
+
+export interface ChatHistoryQASearchResponse {
+  query: string;
+  items: ChatHistoryQASearchItem[];
+}

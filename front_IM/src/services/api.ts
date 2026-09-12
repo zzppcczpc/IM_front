@@ -16,6 +16,7 @@ import type {
   KnowledgeBase,
   KnowledgeBaseFile,
   KnowledgeBaseSearchResponse,
+  ChatHistoryQASearchResponse,
 } from "../types";
 
 export const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
@@ -206,6 +207,16 @@ export function searchKnowledgeBase(
 ) {
   return unwrap<KnowledgeBaseSearchResponse>(
     http.post(`/api/knowledge-bases/${knowledgeBaseId}/search`, payload),
+  );
+}
+
+export function searchChatHistoryQA(payload: {
+  group_id: string;
+  query: string;
+  top_k?: number;
+}) {
+  return unwrap<ChatHistoryQASearchResponse>(
+    http.post("/api/chat/history-qa/search", payload),
   );
 }
 
