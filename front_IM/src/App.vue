@@ -960,6 +960,52 @@
                 </div>
               </div>
             </div>
+            <div class="hint-card group-knowledge-card">
+              <div class="panel-title">
+                <span>群知识库</span>
+                <button class="btn ghost small" @click="() => loadGroupKnowledgeBaseSettings()" :disabled="groupKnowledgeBaseLoading">
+                  {{ groupKnowledgeBaseLoading ? '加载中...' : '刷新' }}
+                </button>
+              </div>
+              <div v-if="groupKnowledgeBases.length" class="group-knowledge-list">
+                <div v-for="item in groupKnowledgeBases" :key="item.id" class="group-knowledge-item">
+                  <div class="group-knowledge-item-main">
+                    <strong>{{ item.name }}</strong>
+                    <span class="muted">
+                      {{ item.file_count }} 个文件 · 绑定人：{{ item.bound_by_username || '历史绑定' }}
+                      <template v-if="item.bound_at"> · {{ formatTime(item.bound_at) }}</template>
+                    </span>
+                  </div>
+                  <button
+                    v-if="canManageGroupKnowledgeBases"
+                    class="btn ghost small danger-text"
+                    :disabled="groupKnowledgeBaseActionId === item.id"
+                    @click="unbindGroupKnowledgeBase(item.id)"
+                  >
+                    {{ groupKnowledgeBaseActionId === item.id ? '处理中...' : '解绑' }}
+                  </button>
+                </div>
+              </div>
+              <div v-else-if="!groupKnowledgeBaseLoading" class="muted">
+                当前群还没有绑定知识库
+              </div>
+              <div v-if="canManageGroupKnowledgeBases" class="group-knowledge-editor">
+                <div class="muted">可绑定的知识库</div>
+                <div v-for="item in availableGroupKnowledgeBases" :key="item.id" class="group-knowledge-option">
+                  <span>{{ item.name }}</span>
+                  <button
+                    class="btn ghost small"
+                    :disabled="groupKnowledgeBaseActionId === item.id"
+                    @click="bindGroupKnowledgeBase(item.id)"
+                  >
+                    {{ groupKnowledgeBaseActionId === item.id ? '处理中...' : '绑定' }}
+                  </button>
+                </div>
+                <div v-if="!availableGroupKnowledgeBases.length" class="muted">
+                  暂无可绑定的知识库
+                </div>
+              </div>
+            </div>
             <div class="hint-card">
               <div class="panel-title">
                 <span>状态</span>
@@ -1307,6 +1353,9 @@ import {
   uploadGroupMedia,
   pingConfirm,
   getGroupDetail,
+  getGroupKnowledgeBases,
+  bindGroupKnowledgeBase as bindGroupKnowledgeBaseApi,
+  unbindGroupKnowledgeBase as unbindGroupKnowledgeBaseApi,
   markRead,
   toggleGroupPin,  // 新增：置顶接口
   clearGroupMessages,  // 新增：清空会话消息接口
@@ -1323,7 +1372,7 @@ import {
   searchKnowledgeBase,
   searchChatHistoryQA,
 } from "./services/api";
-import type { AuthMode, ChatHistoryQASearchItem, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, LoginUser, Message, MutedMember, User, SearchResult, SearchResponse, AIProviderConfig, KnowledgeBase, KnowledgeBaseFile, KnowledgeBaseSearchChunk } from "./types";
+import type { AuthMode, ChatHistoryQASearchItem, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, GroupKnowledgeBaseItem, LoginUser, Message, MutedMember, User, SearchResult, SearchResponse, AIProviderConfig, KnowledgeBase, KnowledgeBaseFile, KnowledgeBaseSearchChunk } from "./types";
 
 type AIMessage = {
   id: string;
@@ -1371,6 +1420,10 @@ const knowledgeBaseFileUploading = ref(false);
 const knowledgeSearchQuery = ref("");
 const knowledgeSearchLoading = ref(false);
 const knowledgeSearchResults = ref<KnowledgeBaseSearchChunk[]>([]);
+const groupKnowledgeBaseIds = ref<string[]>([]);
+const groupKnowledgeBases = ref<GroupKnowledgeBaseItem[]>([]);
+const groupKnowledgeBaseLoading = ref(false);
+const groupKnowledgeBaseActionId = ref<string | null>(null);
 
 const selectedKnowledgeBase = computed(() =>
   knowledgeBases.value.find((item) => item.id === selectedKnowledgeBaseId.value) || null,
@@ -1532,6 +1585,18 @@ const canManageMute = computed(() => {
     (selectedGroup.value.admin_ids || []).includes(currentUser.value.id)
   );
 });
+
+const canManageGroupKnowledgeBases = computed(() => {
+  if (!selectedGroup.value || !currentUser.value) return false;
+  return (
+    selectedGroup.value.owner_id === currentUser.value.id ||
+    (selectedGroup.value.admin_ids || []).includes(currentUser.value.id)
+  );
+});
+
+const availableGroupKnowledgeBases = computed(() =>
+  knowledgeBases.value.filter((item) => !groupKnowledgeBaseIds.value.includes(item.id)),
+);
 
 const allMuteActive = computed(() => {
   const mutedUntil = selectedGroup.value?.all_muted_until;
@@ -2313,6 +2378,73 @@ async function loadGroupMembers(groupId = selectedGroupId.value) {
   }
 }
 
+async function loadGroupKnowledgeBaseSettings(groupId = selectedGroupId.value) {
+  if (!groupId || selectedGroup.value?.type === "private") {
+    groupKnowledgeBaseIds.value = [];
+    groupKnowledgeBases.value = [];
+    return;
+  }
+  groupKnowledgeBaseLoading.value = true;
+  try {
+    const data = await getGroupKnowledgeBases(groupId);
+    groupKnowledgeBaseIds.value = [...(data.knowledge_base_ids || [])];
+    groupKnowledgeBases.value = data.knowledge_bases || [];
+    if (selectedGroup.value?.id === groupId) {
+      selectedGroup.value.knowledge_base_ids = [...groupKnowledgeBaseIds.value];
+    }
+    if (canManageGroupKnowledgeBases.value) {
+      await loadKnowledgeBases();
+    }
+  } catch (error: any) {
+    notify(error?.response?.data?.message || "群知识库读取失败");
+  } finally {
+    groupKnowledgeBaseLoading.value = false;
+  }
+}
+
+async function bindGroupKnowledgeBase(knowledgeBaseId: string) {
+  if (!selectedGroupId.value || !canManageGroupKnowledgeBases.value || !knowledgeBaseId) return;
+  groupKnowledgeBaseActionId.value = knowledgeBaseId;
+  try {
+    const data = await bindGroupKnowledgeBaseApi(
+      selectedGroupId.value,
+      knowledgeBaseId,
+    );
+    groupKnowledgeBaseIds.value = [...(data.knowledge_base_ids || [])];
+    groupKnowledgeBases.value = data.knowledge_bases || [];
+    if (selectedGroup.value) {
+      selectedGroup.value.knowledge_base_ids = [...groupKnowledgeBaseIds.value];
+    }
+    notify("知识库已绑定到群聊");
+  } catch (error: any) {
+    notify(error?.response?.data?.message || "绑定知识库失败");
+  } finally {
+    groupKnowledgeBaseActionId.value = null;
+  }
+}
+
+async function unbindGroupKnowledgeBase(knowledgeBaseId: string) {
+  if (!selectedGroupId.value || !canManageGroupKnowledgeBases.value || !knowledgeBaseId) return;
+  if (!window.confirm("确定要解绑这个群知识库吗？")) return;
+  groupKnowledgeBaseActionId.value = knowledgeBaseId;
+  try {
+    const data = await unbindGroupKnowledgeBaseApi(
+      selectedGroupId.value,
+      knowledgeBaseId,
+    );
+    groupKnowledgeBaseIds.value = [...(data.knowledge_base_ids || [])];
+    groupKnowledgeBases.value = data.knowledge_bases || [];
+    if (selectedGroup.value) {
+      selectedGroup.value.knowledge_base_ids = [...groupKnowledgeBaseIds.value];
+    }
+    notify("知识库已从群聊解绑");
+  } catch (error: any) {
+    notify(error?.response?.data?.message || "解绑知识库失败");
+  } finally {
+    groupKnowledgeBaseActionId.value = null;
+  }
+}
+
 async function changeMemberAdmin(userId: string, makeAdmin: boolean) {
   if (!selectedGroupId.value || !userId) return;
   try {
@@ -2469,6 +2601,7 @@ async function openGroup(groupId: string) {
   }
   await loadAnnouncements(groupId);
   await loadGroupMembers(groupId);
+  await loadGroupKnowledgeBaseSettings(groupId);
   await markLoadedMessagesRead(groupId, currentMessages.value);
   await loadGroups();
   await loadOnlineUsers(groupId);
@@ -2753,6 +2886,30 @@ function connectWs() {
       currentMessages.value = currentMessages.value.map((item) =>
         item.id === targetId ? { ...item, is_revoke: true } : item,
       );
+      return;
+    }
+    if (type === "group_knowledge_bases_updated" && data.content && typeof data.content === "object") {
+      const groupId = String(data.group_id || "");
+      const content = data.content as {
+        knowledge_base_ids?: string[];
+        knowledge_bases?: GroupKnowledgeBaseItem[];
+      };
+      const knowledgeBaseIds = content.knowledge_base_ids || [];
+      const knowledgeBaseItems = content.knowledge_bases || [];
+      const listGroup = groups.value.find((item) => item.id === groupId);
+      if (listGroup) {
+        listGroup.knowledge_base_ids = [...knowledgeBaseIds];
+      }
+      if (groupId === selectedGroupId.value) {
+        groupKnowledgeBaseIds.value = [...knowledgeBaseIds];
+        groupKnowledgeBases.value = [...knowledgeBaseItems];
+        if (selectedGroup.value) {
+          selectedGroup.value.knowledge_base_ids = [...knowledgeBaseIds];
+        }
+        // 广播只负责提醒页面变化；再从服务端读取一次，确保绑定人和绑定时间也同步。
+        await loadGroupKnowledgeBaseSettings(groupId);
+        notify("群知识库已更新");
+      }
       return;
     }
     if (type === "group_announcement_updated" && data.content && typeof data.content === "object") {

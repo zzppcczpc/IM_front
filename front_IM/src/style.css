@@ -1689,6 +1689,29 @@ a {
   font-size: 16px;
 }
 
+.group-knowledge-item,
+.group-knowledge-option {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.group-knowledge-item-main {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.group-knowledge-item .muted {
+  line-height: 1.45;
+}
+
+.group-knowledge-option {
+  align-items: center;
+}
+
 .announcement-item,
 .member-role-item,
 .right-rail .list-item {
@@ -2685,11 +2708,6 @@ body {
     font-size: 15px;
   }
 }
-/* QQ member text softness fix */
-.right-rail > .hint-card:nth-child(2) {
-  display: none !important;
-}
-
 .right-rail > .hint-card:nth-child(1) .panel-title span:first-child::before {
   content: "群公告";
 }

@@ -6,6 +6,7 @@ import type {
   GroupAnnouncement,
   GroupMemberRole,
   GroupMemberWithRole,
+  GroupKnowledgeBaseBinding,
   LoginUser,
   Message,
   Paginated,
@@ -148,6 +149,35 @@ export function markRead(payload: { group_id: string; message_ids: string[] }) {
 
 export function getGroupDetail(groupId: string) {
   return unwrap<Group>(http.get(`/api/group/${groupId}`));
+}
+
+export function getGroupKnowledgeBases(groupId: string) {
+  return unwrap<GroupKnowledgeBaseBinding>(
+    http.get(`/api/group/${groupId}/knowledge-bases`),
+  );
+}
+
+export function updateGroupKnowledgeBases(
+  groupId: string,
+  knowledgeBaseIds: string[],
+) {
+  return unwrap<GroupKnowledgeBaseBinding>(
+    http.put(`/api/group/${groupId}/knowledge-bases`, {
+      knowledge_base_ids: knowledgeBaseIds,
+    }),
+  );
+}
+
+export function bindGroupKnowledgeBase(groupId: string, knowledgeBaseId: string) {
+  return unwrap<GroupKnowledgeBaseBinding>(
+    http.post(`/api/group/${groupId}/knowledge-bases/${knowledgeBaseId}`),
+  );
+}
+
+export function unbindGroupKnowledgeBase(groupId: string, knowledgeBaseId: string) {
+  return unwrap<GroupKnowledgeBaseBinding>(
+    http.delete(`/api/group/${groupId}/knowledge-bases/${knowledgeBaseId}`),
+  );
 }
 
 export function getKnowledgeBases() {

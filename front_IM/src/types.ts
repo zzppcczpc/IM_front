@@ -74,12 +74,30 @@ export interface Group {
   is_pinned?: boolean;       // 是否置顶
   pinned_at?: string | null; // 置顶时间
   admin_ids?: string[];
+  knowledge_base_ids?: string[];
   announcements?: GroupAnnouncement[];
   announcement_editor_ids?: string[];
   muted_members?: MutedMember[];
   all_muted_until?: string | null;
   all_muted_by?: string | null;
   all_muted_at?: string | null;
+}
+
+export interface GroupKnowledgeBaseItem {
+  id: string;
+  name: string;
+  description: string;
+  owner_id: string;
+  file_count: number;
+  bound_by?: string;
+  bound_by_username?: string;
+  bound_at?: string | null;
+}
+
+export interface GroupKnowledgeBaseBinding {
+  group_id: string;
+  knowledge_base_ids: string[];
+  knowledge_bases: GroupKnowledgeBaseItem[];
 }
 
 export interface MessageCite {
