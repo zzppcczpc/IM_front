@@ -856,6 +856,26 @@
                     <Bot :size="16" />
                     {{ aiTriggerEnabled ? '关闭AI回复' : '让AI回复' }}
                   </button>
+                  <template v-if="aiTriggerEnabled && selectedGroup.type !== 'private'">
+                    <button
+                      class="btn ghost ai-source-toggle"
+                      :class="{ active: aiKnowledgeBaseEnabled }"
+                      title="仅使用当前群绑定的知识库"
+                      @click="toggleAIKnowledgeBase"
+                    >
+                      <BookOpen :size="16" />
+                      知识库
+                    </button>
+                    <button
+                      class="btn ghost ai-source-toggle"
+                      :class="{ active: aiGroupFilesEnabled }"
+                      title="使用群文件；引用文件时只使用被引用文件"
+                      @click="toggleAIGroupFiles"
+                    >
+                      <FileText :size="16" />
+                      群文件
+                    </button>
+                  </template>
                   <button
                     v-if="selectedGroup.type !== 'private' && currentStreamingAIMessage"
                     class="btn danger"
@@ -1004,6 +1024,35 @@
                 <div v-if="!availableGroupKnowledgeBases.length" class="muted">
                   暂无可绑定的知识库
                 </div>
+              </div>
+            </div>
+            <div class="hint-card recent-files-card">
+              <div class="panel-title">
+                <span>最近文件</span>
+                <button class="btn ghost small" @click="loadGroupRecentFiles()" :disabled="recentGroupFilesLoading">
+                  {{ recentGroupFilesLoading ? '加载中...' : '刷新' }}
+                </button>
+              </div>
+              <div v-if="recentGroupFiles.length" class="recent-files-list">
+                <div v-for="file in recentGroupFiles" :key="file.file_id" class="recent-file-item">
+                  <div class="recent-file-main">
+                    <a
+                      :href="downloadFileUrl(file.file_id, token)"
+                      target="_blank"
+                      rel="noreferrer"
+                      class="recent-file-name"
+                    >
+                      {{ file.filename }}
+                    </a>
+                    <span class="muted">
+                      {{ file.uploaded_by_username || '群成员' }} · {{ formatTime(file.uploaded_at) }}
+                    </span>
+                  </div>
+                  <span class="badge">{{ recentFileStatusLabel(file.parse_status) }}</span>
+                </div>
+              </div>
+              <div v-else-if="!recentGroupFilesLoading" class="muted">
+                当前群还没有最近文件
               </div>
             </div>
             <div class="hint-card">
@@ -1293,6 +1342,7 @@ import {
   ChevronDown,
   Clock3,
   Ellipsis,
+  FileText,
   Folder,
   Image,
   MessageSquareMore,
@@ -1324,6 +1374,7 @@ import {
   getFriendRequestList,
   getFriends,
   getGroupMessages,
+  getGroupRecentFiles,
   getGroups,
   getStoredToken,
   getStoredUser,
@@ -1372,7 +1423,7 @@ import {
   searchKnowledgeBase,
   searchChatHistoryQA,
 } from "./services/api";
-import type { AuthMode, ChatHistoryQASearchItem, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, GroupKnowledgeBaseItem, LoginUser, Message, MutedMember, User, SearchResult, SearchResponse, AIProviderConfig, KnowledgeBase, KnowledgeBaseFile, KnowledgeBaseSearchChunk } from "./types";
+import type { AuthMode, ChatHistoryQASearchItem, FriendRequest, Group, GroupAnnouncement, GroupMemberRole, GroupMemberWithRole, GroupKnowledgeBaseItem, GroupRecentFile, LoginUser, Message, MutedMember, User, SearchResult, SearchResponse, AIProviderConfig, KnowledgeBase, KnowledgeBaseFile, KnowledgeBaseSearchChunk } from "./types";
 
 type AIMessage = {
   id: string;
@@ -1424,6 +1475,8 @@ const groupKnowledgeBaseIds = ref<string[]>([]);
 const groupKnowledgeBases = ref<GroupKnowledgeBaseItem[]>([]);
 const groupKnowledgeBaseLoading = ref(false);
 const groupKnowledgeBaseActionId = ref<string | null>(null);
+const recentGroupFiles = ref<GroupRecentFile[]>([]);
+const recentGroupFilesLoading = ref(false);
 
 const selectedKnowledgeBase = computed(() =>
   knowledgeBases.value.find((item) => item.id === selectedKnowledgeBaseId.value) || null,
@@ -1489,6 +1542,8 @@ const aiModelsLoading = ref(false);
 const aiProviderConfig = ref<AIProviderConfig | null>(null);
 const selectedAIModelName = ref("");
 const aiTriggerEnabled = ref(false);
+const aiKnowledgeBaseEnabled = ref(false);
+const aiGroupFilesEnabled = ref(false);
 const stoppingAIMessage = ref(false);
 
 const currentStreamingAIMessage = computed(() =>
@@ -1829,6 +1884,19 @@ function knowledgeBaseFileStatusLabel(status: KnowledgeBaseFile["status"]) {
   return labels[status] || status;
 }
 
+function recentFileStatusLabel(status?: string) {
+  const labels: Record<string, string> = {
+    pending: "待处理",
+    parsing: "解析中",
+    chunking: "切分中",
+    vectorizing: "向量化中",
+    success: "可供 AI 使用",
+    failed: "处理失败",
+    unsupported: "暂不支持",
+  };
+  return labels[status || "pending"] || status || "待处理";
+}
+
 function formatFileSize(size: number) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
@@ -1938,6 +2006,8 @@ async function sendAIMessage() {
 async function toggleAITrigger() {
   if (aiTriggerEnabled.value) {
     aiTriggerEnabled.value = false;
+    aiKnowledgeBaseEnabled.value = false;
+    aiGroupFilesEnabled.value = false;
     notify("已关闭 AI 回复");
     return;
   }
@@ -1953,6 +2023,24 @@ async function toggleAITrigger() {
 
   aiTriggerEnabled.value = true;
   notify(`已开启 AI 回复：${selectedAIModelName.value}`);
+}
+
+function toggleAIKnowledgeBase() {
+  aiKnowledgeBaseEnabled.value = !aiKnowledgeBaseEnabled.value;
+  notify(
+    aiKnowledgeBaseEnabled.value
+      ? "已开启知识库检索"
+      : "已关闭知识库检索",
+  );
+}
+
+function toggleAIGroupFiles() {
+  aiGroupFilesEnabled.value = !aiGroupFilesEnabled.value;
+  notify(
+    aiGroupFilesEnabled.value
+      ? "已开启群文件检索"
+      : "已关闭群文件检索",
+  );
 }
 
 async function stopCurrentAIMessage() {
@@ -2402,6 +2490,26 @@ async function loadGroupKnowledgeBaseSettings(groupId = selectedGroupId.value) {
   }
 }
 
+async function loadGroupRecentFiles(groupId = selectedGroupId.value) {
+  if (!groupId || selectedGroup.value?.type === "private") {
+    recentGroupFiles.value = [];
+    return;
+  }
+  recentGroupFilesLoading.value = true;
+  try {
+    const data = await getGroupRecentFiles(groupId);
+    recentGroupFiles.value = data.files || [];
+    if (selectedGroup.value?.id === groupId) {
+      selectedGroup.value.recent_files = [...recentGroupFiles.value];
+    }
+  } catch (error: any) {
+    recentGroupFiles.value = [];
+    notify(error?.response?.data?.message || "群聊最近文件读取失败");
+  } finally {
+    recentGroupFilesLoading.value = false;
+  }
+}
+
 async function bindGroupKnowledgeBase(knowledgeBaseId: string) {
   if (!selectedGroupId.value || !canManageGroupKnowledgeBases.value || !knowledgeBaseId) return;
   groupKnowledgeBaseActionId.value = knowledgeBaseId;
@@ -2585,10 +2693,13 @@ async function openGroup(groupId: string) {
   selectedGroupId.value = groupId;
   selectedGroup.value = groups.value.find((g) => g.id === groupId) || (await getGroupDetail(groupId));
   aiTriggerEnabled.value = false;
+  aiKnowledgeBaseEnabled.value = false;
+  aiGroupFilesEnabled.value = false;
   hasMoreHistory.value = false;
   nextCursor.value = null;
   pendingHistoryScroll.value = null;
   announcements.value = [];
+  recentGroupFiles.value = [];
   try {
     const payload = await getGroupMessages({ id: groupId, page: 1, page_size: 50 });
     // 修改：打开群聊时走统一排序入口；删除原来的直接赋值，避免接口顺序影响页面顺序。
@@ -2602,6 +2713,7 @@ async function openGroup(groupId: string) {
   await loadAnnouncements(groupId);
   await loadGroupMembers(groupId);
   await loadGroupKnowledgeBaseSettings(groupId);
+  await loadGroupRecentFiles(groupId);
   await markLoadedMessagesRead(groupId, currentMessages.value);
   await loadGroups();
   await loadOnlineUsers(groupId);
@@ -2909,6 +3021,21 @@ function connectWs() {
         // 广播只负责提醒页面变化；再从服务端读取一次，确保绑定人和绑定时间也同步。
         await loadGroupKnowledgeBaseSettings(groupId);
         notify("群知识库已更新");
+      }
+      return;
+    }
+    if (type === "recent_files_updated" && data.content && typeof data.content === "object") {
+      const groupId = String(data.group_id || "");
+      const content = data.content as { files?: GroupRecentFile[] };
+      if (groupId === selectedGroupId.value) {
+        recentGroupFiles.value = content.files || [];
+        if (selectedGroup.value) {
+          selectedGroup.value.recent_files = [...recentGroupFiles.value];
+        }
+      }
+      const listGroup = groups.value.find((item) => item.id === groupId);
+      if (listGroup) {
+        listGroup.recent_files = [...(content.files || [])];
       }
       return;
     }
@@ -3250,6 +3377,8 @@ function sendTextMessage() {
   };
   if (aiTriggerEnabled.value) {
     payload.trigger_ai = true;
+    payload.use_knowledge_base = aiKnowledgeBaseEnabled.value;
+    payload.use_group_files = aiGroupFilesEnabled.value;
   }
   // 如果有引用消息，添加 cite 字段
   if (citeMessage.value) {

@@ -58,6 +58,19 @@ export interface MutedMember {
   muted_until: string;
 }
 
+export interface GroupRecentFile {
+  file_id: string;
+  message_id: string;
+  filename: string;
+  file_type: string;
+  storage_path: string;
+  uploaded_by: string;
+  uploaded_by_username?: string;
+  uploaded_at: string;
+  parse_status?: "pending" | "parsing" | "chunking" | "vectorizing" | "success" | "failed" | "unsupported" | string;
+  chunk_count?: number;
+}
+
 export interface Group {
   id: string;
   name: string;
@@ -75,6 +88,7 @@ export interface Group {
   pinned_at?: string | null; // 置顶时间
   admin_ids?: string[];
   knowledge_base_ids?: string[];
+  recent_files?: GroupRecentFile[];
   announcements?: GroupAnnouncement[];
   announcement_editor_ids?: string[];
   muted_members?: MutedMember[];

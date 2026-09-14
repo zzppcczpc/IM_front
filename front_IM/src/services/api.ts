@@ -7,6 +7,7 @@ import type {
   GroupMemberRole,
   GroupMemberWithRole,
   GroupKnowledgeBaseBinding,
+  GroupRecentFile,
   LoginUser,
   Message,
   Paginated,
@@ -149,6 +150,12 @@ export function markRead(payload: { group_id: string; message_ids: string[] }) {
 
 export function getGroupDetail(groupId: string) {
   return unwrap<Group>(http.get(`/api/group/${groupId}`));
+}
+
+export function getGroupRecentFiles(groupId: string) {
+  return unwrap<{ group_id: string; files: GroupRecentFile[] }>(
+    http.get(`/api/group/${groupId}/recent-files`),
+  );
 }
 
 export function getGroupKnowledgeBases(groupId: string) {

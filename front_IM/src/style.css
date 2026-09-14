@@ -2406,6 +2406,16 @@ body {
   background: #e4e4e4;
 }
 
+.composer-actions .toolbar .ai-source-toggle {
+  border: 1px solid #d7d7d7;
+}
+
+.composer-actions .toolbar .ai-source-toggle.active {
+  background: #dbeafe;
+  color: #1d4ed8;
+  border-color: #93c5fd;
+}
+
 .composer-buttons {
   gap: 10px;
 }
