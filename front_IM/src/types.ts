@@ -69,6 +69,9 @@ export interface GroupRecentFile {
   uploaded_at: string;
   parse_status?: "pending" | "parsing" | "chunking" | "vectorizing" | "success" | "failed" | "unsupported" | string;
   chunk_count?: number;
+  extraction_type?: "asr" | "vision" | string | null;
+  extraction_status?: "not_required" | "processing" | "success" | "failed" | string;
+  extraction_error?: string | null;
 }
 
 export interface Group {
@@ -227,6 +230,10 @@ export interface KnowledgeBaseFile {
   parse_metadata?: Record<string, unknown>;
   chunk_count: number;
   vector_error_message?: string | null;
+  extraction_type?: "asr" | "vision" | string | null;
+  extraction_status?: "not_required" | "processing" | "success" | "failed" | string;
+  extraction_error?: string | null;
+  extraction_metadata?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }

@@ -495,7 +495,7 @@
                   <input
                     type="file"
                     hidden
-                    accept=".pdf,.docx,.pptx,.xlsx,.csv,.txt,.md"
+                    accept=".pdf,.docx,.pptx,.xlsx,.csv,.txt,.md,.mp3,.wav,.ogg,.flac,.aac,.m4a,.png,.jpg,.jpeg,.webp,.bmp"
                     @change="onKnowledgeBaseFileChange"
                   />
                 </label>
@@ -506,7 +506,7 @@
               </div>
             </div>
             <div class="muted knowledge-upload-hint">
-              支持 PDF、DOCX、PPTX、XLSX、CSV、TXT、MD，单个文件不超过 100MB。
+              支持 PDF、DOCX、PPTX、XLSX、CSV、TXT、MD、MP3、WAV、PNG、JPG 等文件，单个文件不超过 100MB。
             </div>
             <div class="knowledge-search-panel">
               <input
@@ -547,6 +547,9 @@
                   {{ formatFileSize(file.file_size) }} · {{ file.chunk_count || 0 }} 个 Chunk · {{ formatTime(file.created_at) }}
                 </div>
                 <div v-if="file.error_message" class="ai-message-error">{{ file.error_message }}</div>
+                <div v-if="file.extraction_error" class="ai-message-error">
+                  多模态文本化：{{ file.extraction_error }}
+                </div>
                 <div v-if="file.vector_error_message" class="ai-message-error">
                   向量化：{{ file.vector_error_message }}
                 </div>
@@ -1047,10 +1050,16 @@
                     <span class="muted">
                       {{ file.uploaded_by_username || '群成员' }} · {{ formatTime(file.uploaded_at) }}
                     </span>
-                  </div>
-                  <span class="badge">{{ recentFileStatusLabel(file.parse_status) }}</span>
-                </div>
-              </div>
+                    <span v-if="file.extraction_type" class="muted">
+                      · {{ file.extraction_type === 'asr' ? '语音已转写' : '图片已识别' }}
+                    </span>
+                   </div>
+                   <span class="badge">{{ recentFileStatusLabel(file.parse_status) }}</span>
+                   <div v-if="file.extraction_error" class="ai-message-error">
+                     多模态文本化：{{ file.extraction_error }}
+                   </div>
+                 </div>
+               </div>
               <div v-else-if="!recentGroupFilesLoading" class="muted">
                 当前群还没有最近文件
               </div>
@@ -1811,10 +1820,14 @@ async function onKnowledgeBaseFileChange(event: Event) {
   input.value = "";
   if (!file || !selectedKnowledgeBaseId.value) return;
 
-  const allowedExtensions = [".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".txt", ".md"];
+  const allowedExtensions = [
+    ".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".txt", ".md",
+    ".mp3", ".wav", ".ogg", ".flac", ".aac", ".m4a",
+    ".png", ".jpg", ".jpeg", ".webp", ".bmp",
+  ];
   const extension = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
   if (!allowedExtensions.includes(extension)) {
-    notify("只支持 PDF、DOCX、PPTX、XLSX、CSV、TXT、MD 文件");
+    notify("只支持文档、MP3、WAV、PNG、JPG 等文件");
     return;
   }
   if (file.size > 100 * 1024 * 1024) {
